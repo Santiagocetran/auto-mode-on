@@ -19,6 +19,7 @@ RUN pip install --no-cache-dir \
     "python-multipart>=0.0.9"
 
 COPY apps/api/app ./app
+COPY prompts/ ./prompts/
 
 EXPOSE 8000
 
