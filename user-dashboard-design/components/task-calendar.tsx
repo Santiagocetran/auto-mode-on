@@ -1,13 +1,13 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { ChevronLeft, ChevronRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { statusMeta } from "@/lib/ui-helpers"
-import { shiftMonthKey } from "@/lib/date-ranges"
+import { currentMonthKey, formatMonthLabel, parseMonthKey, shiftMonthKey } from "@/lib/date-ranges"
 import type { CalendarView, TaskWithRefs } from "@/lib/types"
 import { referenceNow } from "@/lib/data-source"
 
@@ -60,26 +60,40 @@ function DayPanel({ tasks }: { tasks: TaskWithRefs[]; date: string }) {
   )
 }
 
+function defaultSelectedDate(days: CalendarView["days"], todayKey: string): string | null {
+  const inMonth = days.find((d) => d.inMonth && d.date === todayKey)
+  return inMonth?.date ?? days.find((d) => d.inMonth)?.date ?? null
+}
+
 export function TaskCalendar({ view }: { view: CalendarView }) {
   const pathname = usePathname()
   const router = useRouter()
   const searchParams = useSearchParams()
   const todayKey = referenceNow().toISOString().slice(0, 10)
+  const activeMonthKey =
+    parseMonthKey(searchParams.get("mes") ?? undefined) ?? view.monthKey
+  const monthLabel = formatMonthLabel(activeMonthKey)
 
-  const [selectedDate, setSelectedDate] = useState<string | null>(() => {
-    const inMonth = view.days.find((d) => d.inMonth && d.date === todayKey)
-    return inMonth?.date ?? view.days.find((d) => d.inMonth)?.date ?? null
-  })
+  const [selectedDate, setSelectedDate] = useState<string | null>(() =>
+    defaultSelectedDate(view.days, todayKey),
+  )
+
+  useEffect(() => {
+    setSelectedDate(defaultSelectedDate(view.days, todayKey))
+  }, [view.days, todayKey])
 
   const selectedTasks = useMemo(() => {
     if (!selectedDate) return []
     return view.days.find((d) => d.date === selectedDate)?.tasks ?? []
   }, [selectedDate, view.days])
 
-  const navigateMonth = (delta: number) => {
-    const nextMonth = shiftMonthKey(view.monthKey, delta)
-    const qs = mergeMonthParams(searchParams, nextMonth).toString()
+  const pushMonth = (monthKey: string) => {
+    const qs = mergeMonthParams(searchParams, monthKey).toString()
     router.push(qs ? `${pathname}?${qs}` : pathname, { scroll: false })
+  }
+
+  const navigateMonth = (delta: number) => {
+    pushMonth(shiftMonthKey(activeMonthKey, delta))
   }
 
   const dateModeLabel =
@@ -90,21 +104,14 @@ export function TaskCalendar({ view }: { view: CalendarView }) {
       <div className="min-w-0 flex-1">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-base font-semibold capitalize">{view.monthLabel}</h2>
+            <h2 className="text-base font-semibold capitalize">{monthLabel}</h2>
             <p className="text-xs text-muted-foreground">Agrupado por {dateModeLabel}</p>
           </div>
           <div className="flex items-center gap-1">
             <Button variant="outline" size="icon-sm" onClick={() => navigateMonth(-1)} aria-label="Mes anterior">
               <ChevronLeft className="h-4 w-4" />
             </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                const qs = mergeMonthParams(searchParams, referenceNow().toISOString().slice(0, 7)).toString()
-                router.push(qs ? `${pathname}?${qs}` : pathname, { scroll: false })
-              }}
-            >
+            <Button variant="outline" size="sm" onClick={() => pushMonth(currentMonthKey())}>
               Hoy
             </Button>
             <Button variant="outline" size="icon-sm" onClick={() => navigateMonth(1)} aria-label="Mes siguiente">
@@ -112,6 +119,12 @@ export function TaskCalendar({ view }: { view: CalendarView }) {
             </Button>
           </div>
         </div>
+
+        {view.totalTasks === 0 ? (
+          <p className="mb-3 text-sm text-muted-foreground">
+            No hay tareas visibles en este mes con los filtros actuales.
+          </p>
+        ) : null}
 
         <div className="overflow-hidden rounded-xl border border-border bg-card shadow-xs">
           <div className="grid grid-cols-7 border-b border-border bg-muted/40">
