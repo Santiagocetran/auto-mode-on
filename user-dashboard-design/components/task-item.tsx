@@ -10,15 +10,19 @@ export function TaskItem({
   owner,
   projectName,
   showScope = false,
+  variant = "card",
+  referenceDate,
 }: {
   task: Task
   meta?: string
   owner?: { name: string | null } | null
   projectName?: string | null
   showScope?: boolean
+  variant?: "card" | "flat"
+  referenceDate?: string
 }) {
   const isDone = task.status === "done"
-  const due = relativeDue(task.due_date)
+  const due = relativeDue(task.due_date, referenceDate)
   const scopeLabel = showScope && !projectName
     ? task.is_global
       ? "Global"
@@ -28,7 +32,14 @@ export function TaskItem({
     : null
 
   return (
-    <div className="flex items-start gap-3 rounded-lg border border-border bg-card px-3.5 py-3 transition-colors hover:border-primary/40">
+    <div
+      className={cn(
+        "flex items-start gap-3 px-3.5 py-3 transition-colors",
+        variant === "card"
+          ? "rounded-lg border border-border bg-card hover:border-primary/40"
+          : "hover:bg-muted/40",
+      )}
+    >
       <span className="mt-0.5 shrink-0">
         {isDone ? (
           <CheckCircle2 className="h-4.5 w-4.5 text-chart-2" />

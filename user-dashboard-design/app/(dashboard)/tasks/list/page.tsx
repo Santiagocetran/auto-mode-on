@@ -8,6 +8,7 @@ import { DashboardFilters } from "@/components/dashboard-filters"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { parseTaskRangePreset } from "@/components/task-scope-page"
 import { resolveRange, formatRangeLabel } from "@/lib/date-ranges"
+import { referenceNow } from "@/lib/data-source"
 import { ArrowLeft } from "lucide-react"
 
 function exploreDescription(sp: Record<string, string | undefined>): string {
@@ -43,6 +44,7 @@ async function TaskExploreContent({
   const range = resolveRange(preset, from, to)
   const rangeLabel = range ? formatRangeLabel(range) : "Todo el tiempo"
   const title = searchParams.vista === "mias" ? "Mis tareas" : "Explorar tareas"
+  const referenceDate = referenceNow().toISOString()
 
   return (
     <>
@@ -86,6 +88,7 @@ async function TaskExploreContent({
                   projectName={task.projectName}
                   owner={{ name: task.ownerName }}
                   showScope
+                  referenceDate={referenceDate}
                 />
               ))
             )}
@@ -102,6 +105,7 @@ async function TaskExploreContent({
                   projectName={task.projectName}
                   owner={{ name: task.ownerName }}
                   showScope
+                  referenceDate={referenceDate}
                 />
               ))
             )}

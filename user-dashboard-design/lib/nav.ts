@@ -3,6 +3,7 @@ import { canAccessSection, effectiveDashboardSections } from "@/lib/permissions"
 
 export type NavIconName =
   | "layout-dashboard"
+  | "chart-column"
   | "users"
   | "list-todo"
   | "folder-kanban"
@@ -16,6 +17,7 @@ export type NavItem = { href: string; label: string; icon: NavIconName; section:
 
 const ALL_NAV: NavItem[] = [
   { href: "/", label: "Resumen", icon: "layout-dashboard", section: "summary" },
+  { href: "/analytics", label: "Análisis", icon: "chart-column", section: "summary" },
   { href: "/people", label: "Personas", icon: "users", section: "team" },
   {
     href: "/tasks",
