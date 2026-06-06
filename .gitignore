@@ -8,6 +8,9 @@ dist/
 .vscode/
 .idea/
 
+# Local-only planning notes — never pushed to remote
+plans/
+
 # Python (apps/api)
 __pycache__/
 *.py[cod]

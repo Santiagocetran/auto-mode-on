@@ -1,88 +1,51 @@
-"""Inbound WhatsApp webhook.
+"""Inbound WhatsApp webhook — thin adapter.
 
-Owner: P1 (capture module). This v1 hook handles Twilio text/audio payloads,
-normalizes them into text, runs task extraction, and returns TwiML.
+Business logic lives in app.services.capture. This router only:
+  1. Reads the form-encoded body (Twilio posts application/x-www-form-urlencoded)
+  2. Validates the Twilio signature against the configured public URL
+  3. Delegates to capture.handle_inbound
+  4. Returns an empty 200 (all replies go out via REST, not TwiML)
 """
 
 import logging
 
 from fastapi import APIRouter, Request, Response
+from fastapi.responses import PlainTextResponse
+from starlette.concurrency import run_in_threadpool
 
 from app.config import get_settings
-from app.db.client import get_db
-from app.models.task import ExtractedTask
-from app.services.capture import (
-    get_existing_inbound,
-    get_task_for_inbound,
-    resolve_channel,
-    resolve_sender,
-    save_inbound_message,
-    save_task,
-)
-from app.services.task_extraction import extract_task
-from app.services.twiml import clarification_reply, confirmation_reply, unregistered_sender_reply
-from app.services.whatsapp_transcription import normalize_twilio_message
+from app.services import capture
+from app.services.twilio_client import validate_signature
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/whatsapp", tags=["whatsapp"])
-logger = logging.getLogger(__name__)
 
 
 @router.post("")
 async def inbound(request: Request) -> Response:
     settings = get_settings()
-    form = {key: str(value) for key, value in (await request.form()).items()}
-    if not form.get("To") or not form.get("From"):
-        return _twiml_response(unregistered_sender_reply())
 
-    db = get_db()
+    # Twilio posts application/x-www-form-urlencoded
+    form = await request.form()
+    form_data = dict(form)
 
-    channel = resolve_channel(db, form.get("To", ""))
-    if channel is None:
-        return _twiml_response(unregistered_sender_reply())
+    # Build exact public URL for Twilio signature validation.
+    # Reconstructing from request headers is fragile behind tunnels; use the
+    # explicit public_webhook_base_url setting instead.
+    base_url = settings.public_webhook_base_url.rstrip("/")
+    webhook_url = f"{base_url}/whatsapp"
 
-    sender = resolve_sender(db, channel.organization_id, form.get("From", ""))
-    if sender is None:
-        return _twiml_response(unregistered_sender_reply())
+    signature = request.headers.get("X-Twilio-Signature", "")
+    if not validate_signature(webhook_url, form_data, signature):
+        log.warning("Invalid Twilio signature from %s", getattr(request.client, "host", "?"))
+        return PlainTextResponse("Forbidden", status_code=403)
 
-    inbound = get_existing_inbound(db, channel.organization_id, form.get("MessageSid", ""))
-    if inbound:
-        existing_task = get_task_for_inbound(db, channel.organization_id, inbound["id"])
-        if existing_task:
-            return _twiml_response(confirmation_reply(_task_from_row(existing_task)))
-
+    # handle_inbound does blocking I/O (OpenAI + Supabase + Twilio). Run it in a
+    # threadpool so it never blocks the async event loop.
     try:
-        message_text = (inbound or {}).get("body") or await normalize_twilio_message(form, settings)
-        inbound = save_inbound_message(
-            db,
-            channel.organization_id,
-            form,
-            message_text,
-            form.get("ProfileName") or sender.display_name,
-        )
-        task = await extract_task(message_text, sender.display_name, settings)
-    except Exception as exc:
-        logger.exception("WhatsApp capture error: %s", exc)
-        return _twiml_response(clarification_reply())
+        await run_in_threadpool(capture.handle_inbound, form_data)
+    except Exception:
+        log.exception("Unhandled error in WhatsApp capture pipeline")
 
-    if task.confidence < 0.6:
-        return _twiml_response(clarification_reply())
-
-    save_task(db, channel.organization_id, inbound, sender, task)
-    return _twiml_response(confirmation_reply(task))
-
-
-def _twiml_response(body: str) -> Response:
-    return Response(content=body, media_type="text/xml")
-
-
-def _task_from_row(row: dict[str, object]) -> ExtractedTask:
-    return ExtractedTask(
-        intent="task_creation",
-        owner=str(row.get("owner_name") or ""),
-        task_title=str(row.get("task_title") or ""),
-        description=row.get("description") if isinstance(row.get("description"), str) else None,
-        due_date=row.get("due_date") if isinstance(row.get("due_date"), str) else None,
-        status="pending",
-        priority=row.get("priority") if row.get("priority") in {"low", "normal", "high", "urgent"} else "normal",
-        confidence=float(row.get("confidence") or 1),
-    )
+    return Response(status_code=200)
