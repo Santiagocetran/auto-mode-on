@@ -14,6 +14,7 @@ from typing import Any, Optional
 
 from app.config import get_settings
 from app.db.client import get_db
+from app.db.features import confirmation_gate_enabled
 from app.models.extraction import ExtractedTask
 from app.services import llm, resolution, transcription
 from app.services.resolution import Org, Person, normalize_twilio_whatsapp, strip_whatsapp_prefix
@@ -37,6 +38,7 @@ def handle_inbound(form_data: dict) -> None:
         return
 
     db = get_db()
+    confirmation = confirmation_gate_enabled(db)
     sender_phone_e164 = strip_whatsapp_prefix(from_number)
 
     # 2. Idempotent inbound save
@@ -85,18 +87,24 @@ def handle_inbound(form_data: dict) -> None:
     # 4. Pending-conversation branch — a draft awaiting either a project choice
     #    or a si/no confirmation. Resolve it before running a fresh extraction so
     #    replies like "si" are never mistaken for a new task.
+    pending_select = "id, status, extraction_payload, offered_projects, source_message_id"
+    pending_statuses = ["awaiting_project_choice"]
+    if confirmation:
+        pending_select += ", resolved_task"
+        pending_statuses.append("awaiting_confirmation")
+
     pending = (
         db.table("task_drafts")
-        .select("id, status, extraction_payload, offered_projects, resolved_task, source_message_id")
+        .select(pending_select)
         .eq("organization_id", org.id)
         .eq("sender_phone", sender_phone_e164)
-        .in_("status", ["awaiting_project_choice", "awaiting_confirmation"])
+        .in_("status", pending_statuses)
         .limit(1)
         .execute()
     )
     if pending.data:
         draft_row = pending.data[0]
-        if draft_row.get("status") == "awaiting_confirmation":
+        if confirmation and draft_row.get("status") == "awaiting_confirmation":
             _handle_confirmation_reply(
                 db=db,
                 draft_row=draft_row,
@@ -112,6 +120,7 @@ def handle_inbound(form_data: dict) -> None:
                 person=person,
                 sender_phone=sender_phone_e164,
                 reply_to=reply_to,
+                confirmation=confirmation,
             )
         return
 
@@ -154,6 +163,7 @@ def handle_inbound(form_data: dict) -> None:
             body=body,
             reply_to=reply_to,
             sender_phone=sender_phone_e164,
+            confirmation=confirmation,
         )
         return
 
@@ -202,6 +212,7 @@ def handle_inbound(form_data: dict) -> None:
             reply_to=reply_to,
             person=person,
             sender_phone=sender_phone_e164,
+            confirmation=confirmation,
         )
         return
 
@@ -219,6 +230,7 @@ def handle_inbound(form_data: dict) -> None:
             reply_to=reply_to,
             person=person,
             sender_phone=sender_phone_e164,
+            confirmation=confirmation,
         )
         return
 
@@ -411,6 +423,50 @@ def _stage_confirmation(
     send_whatsapp(reply_to, f"Registré: {title}{due_suffix}. ¿Confirmás? (si/no)")
 
 
+def _insert_task_immediate(
+    db,
+    extracted: ExtractedTask,
+    org: Org,
+    project_id: Optional[str],
+    is_global: bool,
+    owner_id: Optional[str],
+    owner_name: str,
+    inbound_id: Optional[str],
+    source_text: str,
+    reply_to: str,
+) -> None:
+    """Write the task row immediately (pre-confirmation-gate behavior)."""
+    idempotency_key = f"task:msg:{inbound_id}" if inbound_id else None
+    task_data: dict[str, Any] = {
+        "organization_id": org.id,
+        "project_id": project_id,
+        "is_global": is_global,
+        "owner_id": owner_id,
+        "owner_name": owner_name,
+        "task_title": extracted.task_title,
+        "description": extracted.description,
+        "due_date": extracted.due_date,
+        "status": extracted.status,
+        "priority": extracted.priority,
+        "source_message_id": inbound_id,
+        "source_type": "whatsapp",
+        "source_text": source_text,
+        "confidence": extracted.confidence,
+        "extraction_payload": extracted.model_dump(mode="json"),
+        "idempotency_key": idempotency_key,
+    }
+
+    try:
+        db.table("tasks").insert(task_data).execute()
+    except Exception:
+        log.exception("Failed to insert task for org=%s", org.id)
+        send_whatsapp(reply_to, "Hubo un error registrando la tarea. Por favor intentá de nuevo.")
+        return
+
+    due_suffix = f" — {extracted.due_date}" if extracted.due_date else ""
+    send_whatsapp(reply_to, f"Registré: {extracted.task_title}{due_suffix}. ¿Confirmás?")
+
+
 def _insert_task(
     db,
     extracted: ExtractedTask,
@@ -424,7 +480,23 @@ def _insert_task(
     reply_to: str,
     person: Person,
     sender_phone: str,
+    confirmation: bool = True,
 ) -> None:
+    if not confirmation:
+        _insert_task_immediate(
+            db=db,
+            extracted=extracted,
+            org=org,
+            project_id=project_id,
+            is_global=is_global,
+            owner_id=owner_id,
+            owner_name=owner_name,
+            inbound_id=inbound_id,
+            source_text=source_text,
+            reply_to=reply_to,
+        )
+        return
+
     task_data = _build_task_data(
         extracted=extracted,
         org=org,
@@ -459,6 +531,7 @@ def _handle_global(
     body: str,
     reply_to: str,
     sender_phone: str,
+    confirmation: bool = True,
 ) -> None:
     if not _can_create_global(db, org.id, person):
         send_whatsapp(
@@ -479,6 +552,7 @@ def _handle_global(
         reply_to=reply_to,
         person=person,
         sender_phone=sender_phone,
+        confirmation=confirmation,
     )
 
 
@@ -540,8 +614,9 @@ def _handle_draft_reply(
     person: Person,
     sender_phone: str,
     reply_to: str,
+    confirmation: bool = True,
 ) -> None:
-    """Parse the reply to a disambiguation menu and stage the task for confirmation."""
+    """Parse the reply to a disambiguation menu and stage or insert the task."""
     draft_id = draft_row["id"]
     offered_projects: list[dict] = draft_row["offered_projects"] or []
     extraction_payload: dict = draft_row["extraction_payload"]
@@ -595,6 +670,43 @@ def _handle_draft_reply(
         )
         if inb.data:
             source_text = inb.data[0].get("body") or ""
+
+    if not confirmation:
+        idempotency_key = f"task:draft:{draft_id}"
+        task_data: dict[str, Any] = {
+            "organization_id": org.id,
+            "project_id": project_id,
+            "is_global": is_global,
+            "owner_id": owner_id,
+            "owner_name": owner_name,
+            "task_title": extracted.task_title,
+            "description": extracted.description,
+            "due_date": extracted.due_date,
+            "status": extracted.status,
+            "priority": extracted.priority,
+            "source_message_id": draft_row.get("source_message_id"),
+            "source_type": "whatsapp",
+            "source_text": source_text,
+            "confidence": extracted.confidence,
+            "extraction_payload": extraction_payload,
+            "idempotency_key": idempotency_key,
+        }
+
+        try:
+            task_result = db.table("tasks").insert(task_data).execute()
+            task_id = task_result.data[0]["id"]
+        except Exception:
+            log.exception("Failed to insert task from draft=%s", draft_id)
+            send_whatsapp(reply_to, "Hubo un error creando la tarea. Por favor intentá de nuevo.")
+            return
+
+        db.table("task_drafts").update(
+            {"status": "confirmed", "resolved_task_id": task_id}
+        ).eq("id", draft_id).execute()
+
+        due_suffix = f" — {extracted.due_date}" if extracted.due_date else ""
+        send_whatsapp(reply_to, f"Registré: {extracted.task_title}{due_suffix}. ¿Confirmás?")
+        return
 
     task_data = _build_task_data(
         extracted=extracted,
