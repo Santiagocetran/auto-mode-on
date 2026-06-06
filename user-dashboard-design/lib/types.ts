@@ -241,6 +241,7 @@ export interface DashboardSummary {
     }>
     tasksByTeamAndStatus: Array<{ teamId?: string; teamName?: string; categoryId?: string; categoryName?: string; status: TaskStatus; count: number }>
     tasksByCategoryAndStatus: Array<{ teamId?: string; teamName?: string; categoryId?: string; categoryName?: string; status: TaskStatus; count: number }>
+    activeTasksByDay: Array<{ day: string; label: string; active: number }>
   }
   lists: {
     overdue: TaskWithRefs[]
@@ -303,6 +304,29 @@ export interface UserProfile {
   }
 }
 
+export interface CalendarDayCell {
+  date: string
+  inMonth: boolean
+  tasks: TaskWithRefs[]
+}
+
+export interface CalendarView {
+  monthKey: string
+  monthLabel: string
+  dateMode: "due_date" | "created_at"
+  days: CalendarDayCell[]
+  undatedTasks: TaskWithRefs[]
+  totalTasks: number
+}
+
+export interface ProjectLoadRow {
+  projectId: string | null
+  projectName: string
+  open: number
+  completed: number
+  overdue: number
+}
+
 export interface OrgOverview {
   organization: Organization
   memberCount: number
@@ -325,6 +349,7 @@ export interface OrgOverview {
   }
   statusBreakdown: { status: TaskStatus; count: number }[]
   teamLoad: { team: Team; open: number; completed: number; members: number }[]
+  projectLoad: ProjectLoadRow[]
   recentTasks: (Task & { ownerName: string | null; projectName: string | null })[]
   projectProgress: { projectId: string; total: number; completed: number }[]
   summary: DashboardSummary

@@ -1,4 +1,5 @@
 import "server-only"
+import { cache } from "react"
 import type {
   Organization,
   Team,
@@ -25,6 +26,7 @@ import type {
   TasksScope,
   DashboardFilters,
   TaskWithRefs,
+  CalendarView,
 } from "@/lib/types"
 import type { DateRange } from "@/lib/date-ranges"
 import {
@@ -38,6 +40,7 @@ import {
   buildGeneralTasks,
   buildTeamHierarchy,
   buildTaskListView,
+  buildCalendarView,
 } from "@/lib/aggregations"
 import { createSupabaseClient, resolveOrgId } from "@/lib/supabase/client"
 import { getSessionContext } from "@/lib/session"
@@ -128,9 +131,6 @@ type DbTask = {
   updated_at: string
 }
 
-let cachedDataset: OrgDataset | null = null
-let cachedOrgId: string | null = null
-
 function indexBy<T extends string>(rows: { key: string; value: T }[]): Map<string, T[]> {
   const map = new Map<string, T[]>()
   for (const { key, value } of rows) {
@@ -165,11 +165,9 @@ function mapTask(row: DbTask, peopleById: Map<string, DbPerson>): Task {
   }
 }
 
-async function fetchOrgDataset(orgId?: string): Promise<OrgDataset> {
+const fetchOrgDataset = cache(async (orgId?: string): Promise<OrgDataset> => {
   const supabase = createSupabaseClient()
   const resolvedOrgId = orgId ?? (await resolveOrgId(supabase))
-
-  if (cachedDataset && cachedOrgId === resolvedOrgId) return cachedDataset
 
   const orgRes = await supabase
     .from("organizations")
@@ -409,8 +407,7 @@ async function fetchOrgDataset(orgId?: string): Promise<OrgDataset> {
     received_at: m.received_at as string,
   }))
 
-  cachedOrgId = resolvedOrgId
-  cachedDataset = {
+  return {
     organization,
     teams,
     categories,
@@ -423,8 +420,7 @@ async function fetchOrgDataset(orgId?: string): Promise<OrgDataset> {
     reminders,
     inboundMessages,
   }
-  return cachedDataset
-}
+})
 
 async function loadDashboardContext(
   range: DateRange | null,
@@ -504,4 +500,12 @@ export async function getTaskListFromSupabase(
 ): Promise<{ pendingTasks: TaskWithRefs[]; completedTasks: TaskWithRefs[]; stats: GeneralTasksView["stats"] }> {
   const { dataset, session, filters } = await loadDashboardContext(range, searchParams)
   return buildTaskListView(dataset, session, filters, range)
+}
+
+export async function getCalendarViewFromSupabase(
+  monthKey: string,
+  searchParams: Record<string, string | undefined> = {},
+): Promise<CalendarView> {
+  const { dataset, session, filters } = await loadDashboardContext(null, searchParams)
+  return buildCalendarView(dataset, session, filters, monthKey)
 }

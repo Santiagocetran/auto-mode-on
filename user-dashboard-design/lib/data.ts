@@ -1,5 +1,5 @@
 import "server-only"
-import type { OrgOverview, UserProfile, ProjectDetail, GeneralTasksView, TaskWithRefs } from "@/lib/types"
+import type { OrgOverview, UserProfile, ProjectDetail, GeneralTasksView, TaskWithRefs, CalendarView } from "@/lib/types"
 import * as mock from "@/lib/mock-data"
 import { resolveRange, type RangePreset } from "@/lib/date-ranges"
 import {
@@ -12,6 +12,7 @@ import {
   buildGeneralTasks,
   buildTeamHierarchy,
   buildTaskListView,
+  buildCalendarView,
   isOverdue,
   isOpen,
   type OrgDataset,
@@ -20,6 +21,7 @@ import { USE_SUPABASE } from "@/lib/data-source"
 import { getSessionContext } from "@/lib/session"
 import { parseDashboardFilters } from "@/lib/filters"
 import { parseOrgFeatures, resolveRolePermissions } from "@/lib/permissions"
+import { currentMonthKey, parseMonthKey } from "@/lib/date-ranges"
 import {
   getOrgOverviewFromSupabase,
   getPeopleFromSupabase,
@@ -30,6 +32,7 @@ import {
   getGeneralTasksFromSupabase,
   getTeamHierarchyFromSupabase,
   getTaskListFromSupabase,
+  getCalendarViewFromSupabase,
 } from "@/lib/supabase-queries"
 
 export { USE_SUPABASE } from "@/lib/data-source"
@@ -84,6 +87,20 @@ export async function getOrgOverview(opts?: OverviewOpts): Promise<OrgOverview> 
   const session = await mockSession()
   const filters = parseDashboardFilters(session, sp, session.permissions, session.membership)
   return buildOrgOverview(mockDataset(), session, session.features, filters, range)
+}
+
+export async function getCalendarView(opts?: {
+  month?: string
+  searchParams?: DataSearchParams
+}): Promise<CalendarView> {
+  const sp = opts?.searchParams ?? {}
+  const monthKey = parseMonthKey(opts?.month ?? sp.mes) ?? currentMonthKey()
+
+  if (USE_SUPABASE) return getCalendarViewFromSupabase(monthKey, sp)
+
+  const session = await mockSession()
+  const filters = parseDashboardFilters(session, sp, session.permissions, session.membership)
+  return buildCalendarView(mockDataset(), session, filters, monthKey)
 }
 
 export async function getPeople(): Promise<UserProfile[]> {

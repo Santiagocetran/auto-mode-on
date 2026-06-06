@@ -84,8 +84,111 @@ export function resolveRange(preset: RangePreset, from?: string, to?: string): D
   }
 }
 
+/** Ventana para gráficos de línea temporal cuando el preset es "todo el tiempo". */
+export function resolveTimelineRange(
+  range: DateRange | null,
+  tasks: Array<{ created_at: string }> = [],
+): DateRange {
+  if (range) return range
+
+  const today = referenceNow()
+  const defaultFrom = startOfDay(addDays(today, -89))
+  const defaultTo = endOfDay(today)
+
+  if (tasks.length === 0) return { from: defaultFrom, to: defaultTo }
+
+  let earliest = defaultFrom
+  for (const task of tasks) {
+    const created = new Date(task.created_at.length === 10 ? `${task.created_at}T00:00:00Z` : task.created_at)
+    if (created < earliest) earliest = startOfDay(created)
+  }
+
+  const spanDays = Math.ceil((defaultTo.getTime() - earliest.getTime()) / (1000 * 60 * 60 * 24)) + 1
+  if (spanDays > 90) return { from: defaultFrom, to: defaultTo }
+
+  return { from: earliest, to: defaultTo }
+}
+
+export function eachDayInRange(range: DateRange): Date[] {
+  const days: Date[] = []
+  let cursor = startOfDay(range.from)
+  const end = range.to
+  while (cursor <= end) {
+    days.push(new Date(cursor))
+    cursor = addDays(cursor, 1)
+  }
+  return days
+}
+
 export function formatRangeLabel(range: DateRange): string {
   const fmt = (d: Date) =>
     d.toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric" })
   return `${fmt(range.from)} – ${fmt(range.to)}`
+}
+
+const MONTH_KEY_RE = /^(\d{4})-(\d{2})$/
+
+export function currentMonthKey(reference: Date = referenceNow()): string {
+  return `${reference.getUTCFullYear()}-${String(reference.getUTCMonth() + 1).padStart(2, "0")}`
+}
+
+export function parseMonthKey(value?: string): string | null {
+  if (!value || !MONTH_KEY_RE.test(value)) return null
+  const match = value.match(MONTH_KEY_RE)
+  if (!match) return null
+  const year = match[1]
+  const month = match[2]
+  const mon = Number(month)
+  if (mon < 1 || mon > 12) return null
+  return `${year}-${month}`
+}
+
+export function resolveMonthRange(monthKey: string): DateRange | null {
+  const parsed = parseMonthKey(monthKey)
+  if (!parsed) return null
+  const [, year, month] = parsed.match(MONTH_KEY_RE)!
+  const mon = Number(month) - 1
+  const from = startOfDay(new Date(Date.UTC(Number(year), mon, 1)))
+  const lastDay = new Date(Date.UTC(Number(year), mon + 1, 0))
+  return { from, to: endOfDay(lastDay) }
+}
+
+export function formatMonthLabel(monthKey: string): string {
+  const parsed = parseMonthKey(monthKey)
+  if (!parsed) return monthKey
+  const match = parsed.match(MONTH_KEY_RE)
+  if (!match) return monthKey
+  const year = match[1]
+  const month = match[2]
+  const d = new Date(Date.UTC(Number(year), Number(month) - 1, 1))
+  return d.toLocaleDateString("es-ES", { month: "long", year: "numeric" })
+}
+
+export function shiftMonthKey(monthKey: string, delta: number): string {
+  const parsed = parseMonthKey(monthKey) ?? currentMonthKey()
+  const match = parsed.match(MONTH_KEY_RE)
+  if (!match) return currentMonthKey()
+  const year = match[1]
+  const month = match[2]
+  const d = new Date(Date.UTC(Number(year), Number(month) - 1 + delta, 1))
+  return currentMonthKey(d)
+}
+
+export function calendarGridDays(monthKey: string): Array<{ date: string; inMonth: boolean }> {
+  const range = resolveMonthRange(monthKey)
+  if (!range) return []
+
+  const monthStart = range.from
+  const gridStart = startOfWeek(monthStart)
+  const monthEnd = range.to
+  const days: Array<{ date: string; inMonth: boolean }> = []
+
+  for (let i = 0; i < 42; i++) {
+    const d = addDays(gridStart, i)
+    const date = d.toISOString().slice(0, 10)
+    const inMonth = d >= monthStart && d <= monthEnd
+    days.push({ date, inMonth })
+  }
+
+  return days
 }

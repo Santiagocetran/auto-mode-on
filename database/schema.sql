@@ -4,11 +4,16 @@
 -- Fresh database:
 --   psql $DATABASE_URL -f database/schema.sql
 --   psql $DATABASE_URL -f database/seeds.sql
+--   psql $DATABASE_URL -f database/seeds-transactional.sql
 --
 -- Re-apply after schema changes (destroys existing data):
 --   psql $DATABASE_URL -f database/reset.sql
 --   psql $DATABASE_URL -f database/schema.sql
 --   psql $DATABASE_URL -f database/seeds.sql
+--   psql $DATABASE_URL -f database/seeds-transactional.sql
+--
+-- Refresh tasks/projects only (keeps orgs & users):
+--   ./database/refresh-demo-data.sh
 --
 -- Partial update (e.g. only a fixed function): run just that CREATE OR REPLACE block.
 -- Do not re-run this whole file on a populated database — types/tables already exist.

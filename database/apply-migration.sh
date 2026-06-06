@@ -3,6 +3,7 @@
 #
 # Usage:
 #   DATABASE_URL='postgresql://postgres.[ref]:[password]@...' ./database/apply-migration.sh 002_confirmation_gate.sql
+#   DATABASE_URL='postgresql://postgres.[ref]:[password]@...' ./database/apply-migration.sh 003_confirmation_gate_indexes.sql
 #
 # Get DATABASE_URL from Supabase → Project Settings → Database → Connection string (URI).
 

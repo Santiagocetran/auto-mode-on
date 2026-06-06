@@ -1,0 +1,232 @@
+Absolutely. Here are manual test flows written as user stories, with expected results.
+
+*1. Text Task Capture*
+As a registered WhatsApp user, I send a text message asking the bot to create a task.
+
+Message:
+
+⁠ text
+Yo me encargo del informe para el financiador antes del viernes
+ ⁠
+
+Expected flow:
+
+⁠ text
+User WhatsApp
+→ Twilio webhook
+→ backend validates signature
+→ backend resolves org from To
+→ backend resolves user from From
+→ backend saves inbound_messages
+→ backend sends text to OpenAI task extraction
+→ backend inserts tasks
+→ backend sends WhatsApp confirmation
+ ⁠
+
+Expected WhatsApp reply:
+
+⁠ text
+Registré: Preparar informe para financiador — YYYY-MM-DD. ¿Confirmás?
+ ⁠
+
+Expected DB:
+•⁠  ⁠⁠ inbound_messages ⁠ has one new row.
+•⁠  ⁠⁠ body ⁠ contains the original text.
+•⁠  ⁠⁠ tasks ⁠ has one new row.
+•⁠  ⁠⁠ source_type = whatsapp ⁠
+•⁠  ⁠⁠ source_message_id ⁠ points to ⁠ inbound_messages.id ⁠
+•⁠  ⁠⁠ owner_id ⁠ matches the sender’s ⁠ people.id ⁠.
+
+*2. Voice Note Task Capture*
+As a registered WhatsApp user, I send a voice note instead of typing.
+
+Voice note script:
+
+⁠ text
+Me encargo de coordinar el taller de nutrición para el jueves.
+ ⁠
+
+Expected flow:
+
+⁠ text
+User voice note
+→ Twilio webhook with MediaUrl0
+→ backend downloads Twilio audio
+→ backend converts audio to mp3
+→ backend transcribes with OpenAI
+→ backend saves transcript in inbound_messages.body
+→ backend extracts task
+→ backend inserts task
+→ backend sends confirmation
+ ⁠
+
+Expected DB:
+•⁠  ⁠⁠ inbound_messages.body ⁠ contains the transcript.
+•⁠  ⁠⁠ inbound_messages.media_url ⁠ contains Twilio media URL.
+•⁠  ⁠⁠ tasks.source_text ⁠ contains the transcript.
+•⁠  ⁠⁠ tasks.task_title ⁠ should resemble “Coordinar taller de nutrición”.
+
+*3. Unregistered Sender*
+As an unknown WhatsApp user, I send a task message to the bot.
+
+Message:
+
+⁠ text
+Yo hago la compra de materiales mañana
+ ⁠
+
+Expected flow:
+
+⁠ text
+Twilio webhook
+→ backend resolves org
+→ backend cannot resolve From in people
+→ backend does not call OpenAI
+→ backend does not insert task
+→ backend sends rejection
+ ⁠
+
+Expected reply:
+
+⁠ text
+No estás registrado en esta organización. Contactá al administrador.
+ ⁠
+
+Expected DB:
+•⁠  ⁠No ⁠ tasks ⁠ row.
+•⁠  ⁠Depending on current implementation, inbound may already be saved before sender rejection. Check ⁠ inbound_messages ⁠.
+
+*4. Unsupported Media*
+As a registered user, I send an image/file instead of text or audio.
+
+Expected flow:
+
+⁠ text
+Twilio webhook
+→ backend sees NumMedia > 0
+→ MediaContentType0 is not audio/*
+→ backend rejects normalization
+→ backend sends clarification
+ ⁠
+
+Expected reply:
+
+⁠ text
+No pude entender el mensaje. Si enviaste un audio, probá de nuevo o escribilo por texto.
+ ⁠
+
+Expected DB:
+•⁠  ⁠⁠ inbound_messages ⁠ may exist.
+•⁠  ⁠No ⁠ tasks ⁠ row.
+
+*5. Duplicate Twilio Retry*
+As Twilio, I resend the same webhook with the same ⁠ MessageSid ⁠.
+
+Manual way:
+•⁠  ⁠Use curl/postman with same form fields and same ⁠ MessageSid ⁠.
+•⁠  ⁠Or trigger a retry if available.
+
+Expected flow:
+
+⁠ text
+backend tries inbound insert
+→ unique MessageSid conflict
+→ backend finds existing inbound
+→ short-circuits
+→ no duplicate task
+ ⁠
+
+Expected DB:
+•⁠  ⁠Only one ⁠ inbound_messages ⁠ row for that ⁠ MessageSid ⁠.
+•⁠  ⁠Only one ⁠ tasks ⁠ row linked to that inbound.
+
+*6. Project Clarification*
+As a registered user, I send a message that could belong to a project but is ambiguous.
+
+Message:
+
+⁠ text
+Mañana coordino el espacio para el taller
+ ⁠
+
+Expected flow:
+
+⁠ text
+backend extracts task
+→ LLM returns project_resolution.status = needs_clarification
+→ backend inserts task_drafts
+→ backend sends project menu
+ ⁠
+
+Expected reply:
+
+⁠ text
+Registré: Coordinar espacio para el taller.
+
+¿Dónde la ubicamos?
+0 — Tarea individual (sin proyecto)
+G — Tarea global (toda la organización)
+1 — ...
+2 — ...
+
+Respondé con 0, G, el número o el nombre del proyecto.
+ ⁠
+
+Then reply:
+
+⁠ text
+0
+ ⁠
+
+Expected DB:
+•⁠  ⁠⁠ task_drafts.status ⁠ becomes ⁠ confirmed ⁠.
+•⁠  ⁠⁠ tasks ⁠ row is created with ⁠ project_id = null ⁠.
+
+*7. Matched Project Task*
+As a registered user, I mention a known active project.
+
+Message:
+
+⁠ text
+Yo hago el informe del financiador para el viernes
+ ⁠
+
+Expected:
+•⁠  ⁠Task is created directly.
+•⁠  ⁠⁠ tasks.project_id ⁠ is set if the active project list includes “Informe financiador Q2”.
+•⁠  ⁠No ⁠ task_drafts ⁠ row needed.
+
+*8. Global Task Permission*
+As a user, I ask for an organization-wide task.
+
+Message:
+
+⁠ text
+Hay que renovar la personería jurídica de la fundación antes de septiembre
+ ⁠
+
+Expected if user has permission:
+•⁠  ⁠⁠ tasks.is_global = true ⁠
+•⁠  ⁠⁠ project_id = null ⁠
+•⁠  ⁠confirmation sent.
+
+Expected if user lacks permission:
+
+⁠ text
+No tenés permiso para crear tareas globales. Contactá a la directora.
+ ⁠
+
+*Demo Smoke Checklist*
+Use this minimum set:
+
+⁠ text
+[ ] Registered text message creates inbound_messages row
+[ ] Registered text message creates tasks row
+[ ] WhatsApp confirmation received
+[ ] Registered voice note creates transcript in inbound_messages.body
+[ ] Voice note creates tasks row
+[ ] Unknown sender is rejected
+[ ] Duplicate MessageSid does not duplicate task
+ ⁠
+
+For the 2-minute demo, I’d only show flows 1 and 2 live, and keep the others as QA/manual validation.

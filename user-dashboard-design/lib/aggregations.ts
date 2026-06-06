@@ -21,8 +21,11 @@ import type {
   SessionContext,
   OrgFeatures,
   DashboardFilters,
+  CalendarView,
+  ProjectLoadRow,
 } from "@/lib/types"
 import type { DateRange } from "@/lib/date-ranges"
+import { calendarGridDays, formatMonthLabel, eachDayInRange, resolveTimelineRange } from "@/lib/date-ranges"
 import { referenceNow } from "@/lib/data-source"
 import { applyDashboardFilters, applyTaskVisibility } from "@/lib/filters"
 import { effectiveTasksScope } from "@/lib/permissions"
@@ -153,6 +156,44 @@ const BUCKET_LABELS: Record<string, string> = {
   mas_30_dias: "+30 días",
 }
 
+function parseTaskInstant(iso: string): Date {
+  return new Date(iso.length === 10 ? `${iso}T00:00:00Z` : iso)
+}
+
+function endOfDayUtc(d: Date): Date {
+  const x = new Date(d)
+  x.setUTCHours(23, 59, 59, 999)
+  return x
+}
+
+function wasActiveOnDay(task: Task, dayEnd: Date): boolean {
+  if (task.status === "cancelled") return false
+  const created = parseTaskInstant(task.created_at)
+  if (created > dayEnd) return false
+  if (task.completed_at) {
+    const completed = parseTaskInstant(task.completed_at)
+    if (completed <= dayEnd) return false
+  }
+  return true
+}
+
+export function computeActiveTasksTimeline(
+  tasks: Task[],
+  range: DateRange | null,
+): Array<{ day: string; label: string; active: number }> {
+  const timelineRange = resolveTimelineRange(range, tasks)
+
+  return eachDayInRange(timelineRange).map((day) => {
+    const dayEnd = endOfDayUtc(day)
+    const dayKey = day.toISOString().slice(0, 10)
+    return {
+      day: dayKey,
+      label: day.toLocaleDateString("es-ES", { day: "numeric", month: "short" }),
+      active: tasks.filter((task) => wasActiveOnDay(task, dayEnd)).length,
+    }
+  })
+}
+
 export function buildDashboardSummary(
   tasks: Task[],
   projects: Project[],
@@ -161,6 +202,7 @@ export function buildDashboardSummary(
   inboundMessages: InboundMessage[],
   ctx: TaskContext,
   range: DateRange | null,
+  timelineTasks?: Task[],
 ): DashboardSummary {
   const open = tasks.filter(isOpen)
   const now = referenceNow()
@@ -251,6 +293,7 @@ export function buildDashboardSummary(
         .sort((a, b) => b.openTasks - a.openTasks || b.overdueTasks - a.overdueTasks),
       tasksByTeamAndStatus,
       tasksByCategoryAndStatus,
+      activeTasksByDay: computeActiveTasksTimeline(timelineTasks ?? tasks, range),
     },
     lists: {
       overdue: enriched
@@ -386,6 +429,7 @@ export function buildOrgOverview(
 ): OrgOverview {
   const { organization, teams, categories, projects, memberships } = dataset
   const tasks = visibleTasks(dataset, session, filters, range)
+  const tasksForTimeline = visibleTasks(dataset, session, filters, null)
   const ctx: TaskContext = {
     users: dataset.users,
     projects: dataset.projects,
@@ -412,6 +456,8 @@ export function buildOrgOverview(
         }
       })
     : []
+
+  const projectLoad = features.projects ? computeProjectLoad(tasks, ctx) : []
 
   const recentTasks = [...tasks]
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
@@ -452,6 +498,7 @@ export function buildOrgOverview(
     },
     statusBreakdown: computeStatusBreakdown(tasks),
     teamLoad,
+    projectLoad,
     recentTasks,
     projectProgress: projects.map((p) => {
       const pt = tasks.filter((t) => t.project_id === p.id)
@@ -469,6 +516,7 @@ export function buildOrgOverview(
       filteredInbound,
       ctx,
       range,
+      tasksForTimeline,
     ),
   }
 }
@@ -680,6 +728,96 @@ export function buildTeamHierarchy(
       }),
     }
   }).filter((row) => row.openTasks > 0)
+}
+
+function taskCalendarDate(task: Task, dateMode: "due_date" | "created_at"): string | null {
+  const raw = dateMode === "created_at" ? task.created_at : task.due_date
+  if (!raw) return null
+  return raw.slice(0, 10)
+}
+
+export function buildCalendarView(
+  dataset: OrgDataset,
+  session: SessionContext,
+  filters: DashboardFilters,
+  monthKey: string,
+): CalendarView {
+  const ctx = taskContextFromDataset(dataset)
+  const scoped = visibleTasks(dataset, session, filters, null)
+  const dateMode = filters.dateMode
+
+  const inMonth = scoped.filter((task) => {
+    const day = taskCalendarDate(task, dateMode)
+    if (!day) return false
+    const d = new Date(day + "T00:00:00Z")
+    const rangeFrom = new Date(Date.UTC(
+      Number(monthKey.slice(0, 4)),
+      Number(monthKey.slice(5, 7)) - 1,
+      1,
+    ))
+    const rangeTo = new Date(Date.UTC(
+      Number(monthKey.slice(0, 4)),
+      Number(monthKey.slice(5, 7)),
+      0,
+      23, 59, 59, 999,
+    ))
+    return d >= rangeFrom && d <= rangeTo
+  })
+
+  const undated = scoped
+    .filter((task) => !taskCalendarDate(task, dateMode))
+    .map((t) => withRefs(t, ctx))
+    .sort((a, b) => a.task_title.localeCompare(b.task_title, "es"))
+
+  const byDay = new Map<string, TaskWithRefs[]>()
+  for (const task of inMonth) {
+    const day = taskCalendarDate(task, dateMode)
+    if (!day) continue
+    const list = byDay.get(day) ?? []
+    list.push(withRefs(task, ctx))
+    byDay.set(day, list)
+  }
+
+  for (const [, list] of byDay) {
+    list.sort((a, b) => a.task_title.localeCompare(b.task_title, "es"))
+  }
+
+  const days = calendarGridDays(monthKey).map(({ date, inMonth: inMonthDay }) => ({
+    date,
+    inMonth: inMonthDay,
+    tasks: byDay.get(date) ?? [],
+  }))
+
+  return {
+    monthKey,
+    monthLabel: formatMonthLabel(monthKey),
+    dateMode,
+    days,
+    undatedTasks: undated,
+    totalTasks: inMonth.length + undated.length,
+  }
+}
+
+export function computeProjectLoad(tasks: Task[], ctx: TaskContext): ProjectLoadRow[] {
+  const rows = new Map<string | null, ProjectLoadRow>()
+
+  for (const task of tasks) {
+    const key = task.project_id
+    const projectName = key
+      ? (ctx.projects.find((p) => p.id === key)?.name ?? "Proyecto")
+      : task.is_global
+        ? "Global"
+        : "Sin proyecto"
+    const row = rows.get(key) ?? { projectId: key, projectName, open: 0, completed: 0, overdue: 0 }
+    if (isOpen(task)) row.open += 1
+    if (task.status === "done") row.completed += 1
+    if (isOverdue(task)) row.overdue += 1
+    rows.set(key, row)
+  }
+
+  return [...rows.values()]
+    .filter((row) => row.open + row.completed > 0)
+    .sort((a, b) => b.open - a.open || b.completed - a.completed)
 }
 
 export function buildTaskListView(
