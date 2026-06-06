@@ -9,6 +9,7 @@ def test_validate_signature_valid():
          patch("app.services.twilio_client.RequestValidator") as mock_rv_cls:
 
         mock_settings.return_value.twilio_auth_token = "token"
+        mock_settings.return_value.skip_twilio_signature_validation = False
         mock_rv_cls.return_value.validate.return_value = True
 
         from app.services.twilio_client import validate_signature
@@ -26,6 +27,7 @@ def test_validate_signature_invalid():
          patch("app.services.twilio_client.RequestValidator") as mock_rv_cls:
 
         mock_settings.return_value.twilio_auth_token = "token"
+        mock_settings.return_value.skip_twilio_signature_validation = False
         mock_rv_cls.return_value.validate.return_value = False
 
         from app.services.twilio_client import validate_signature

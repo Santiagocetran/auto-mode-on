@@ -17,10 +17,12 @@ def validate_signature(url: str, params: dict, signature_header: str) -> bool:
     returns False. In local dev, set skip_twilio_signature_validation=True to bypass.
     """
     settings = get_settings()
+    # Explicit dev override always wins — useful for local smoke tests / tunnels
+    # where the public URL changes. Never enable in production.
+    if settings.skip_twilio_signature_validation:
+        log.warning("Twilio signature validation bypassed (SKIP_TWILIO_SIGNATURE_VALIDATION=true)")
+        return True
     if not settings.twilio_auth_token:
-        if settings.skip_twilio_signature_validation:
-            log.warning("Twilio signature validation bypassed (dev mode, no auth token)")
-            return True
         log.error("TWILIO_AUTH_TOKEN not set and bypass not enabled — rejecting")
         return False
     validator = RequestValidator(settings.twilio_auth_token)
