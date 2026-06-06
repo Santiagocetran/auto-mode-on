@@ -1,6 +1,7 @@
 "use client"
 
 import Link from "next/link"
+import { useEffect, useState } from "react"
 import type { DashboardSummary } from "@/lib/types"
 import { TaskItem } from "@/components/task-item"
 import { EmptyState } from "@/components/dashboard-ui"
@@ -29,6 +30,7 @@ export function OperationalLists({
 
   const defaultTab: TabKey =
     counts.overdue > 0 ? "overdue" : counts.dueSoon > 0 ? "dueSoon" : "blocked"
+  const [activeTab, setActiveTab] = useState<TabKey>(defaultTab)
 
   const itemsByTab: Record<TabKey, DashboardSummary["lists"]["overdue"]> = {
     overdue: lists.overdue.slice(0, 5),
@@ -42,9 +44,13 @@ export function OperationalLists({
     blocked: "No hay tareas bloqueadas.",
   }
 
+  useEffect(() => {
+    setActiveTab((current) => (counts[current] > 0 ? current : defaultTab))
+  }, [counts.blocked, counts.dueSoon, counts.overdue, defaultTab])
+
   return (
     <section className="overflow-hidden rounded-xl border border-border bg-card shadow-xs">
-      <Tabs defaultValue={defaultTab}>
+      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as TabKey)}>
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-muted/20 px-4 py-3">
           <TabsList variant="line" className="h-auto w-auto gap-0 bg-transparent p-0">
             {TABS.map((tab) => (
