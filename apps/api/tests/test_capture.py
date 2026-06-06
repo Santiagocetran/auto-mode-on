@@ -840,8 +840,9 @@ def test_confirmation_no_cancels_without_task(body):
     assert "ancel" in mock_send.call_args[0][1]
 
 
-@pytest.mark.parametrize("body", ["tal vez", "qué?", "y el otro tema"])
-def test_confirmation_unknown_reasks(body):
+@pytest.mark.parametrize("body", ["es para el equipo de finanzas", "categoría: gastos", "del taller de marzo"])
+def test_confirmation_freetext_saved_as_description(body):
+    """A reply that isn't si/no is stored as the task description, then saved."""
     drafts_table = make_query_mock(data=[_confirmation_draft()])
     tasks_table = make_query_mock(data=[{"id": TASK_ID}])
 
@@ -849,9 +850,30 @@ def test_confirmation_unknown_reasks(body):
         body, _confirmation_draft(), tasks_table, drafts_table
     )
 
-    # Neither a new extraction nor a task insert; draft left pending.
+    # No re-extraction; the task is inserted with the reply as its description.
     mock_extract.assert_not_called()
-    tasks_table.insert.assert_not_called()
-    drafts_table.update.assert_not_called()
+    tasks_table.insert.assert_called_once()
+    inserted = tasks_table.insert.call_args[0][0]
+    assert inserted["description"] == body
+    assert inserted["extraction_payload"]["description"] == body
+    drafts_table.update.assert_called_once()
+    assert drafts_table.update.call_args[0][0]["status"] == "confirmed"
     mock_send.assert_called_once()
-    assert "Confirmás" in mock_send.call_args[0][1]
+    assert "Listo" in mock_send.call_args[0][1]
+
+
+def test_confirmation_freetext_appends_to_existing_description():
+    """If the LLM already extracted a description, the reply is appended, not lost."""
+    draft = _confirmation_draft()
+    draft["resolved_task"]["description"] = "Borrador inicial"
+    draft["resolved_task"]["extraction_payload"]["description"] = "Borrador inicial"
+    drafts_table = make_query_mock(data=[draft])
+    tasks_table = make_query_mock(data=[{"id": TASK_ID}])
+
+    _, _, mock_send = _run_confirmation_reply(
+        "para finanzas", draft, tasks_table, drafts_table
+    )
+
+    inserted = tasks_table.insert.call_args[0][0]
+    assert inserted["description"] == "Borrador inicial\npara finanzas"
+    assert "Listo" in mock_send.call_args[0][1]

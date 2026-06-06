@@ -420,7 +420,16 @@ def _stage_confirmation(
         return
 
     due_suffix = f" — {due_date}" if due_date else ""
-    send_whatsapp(reply_to, f"Registré: {title}{due_suffix}. ¿Confirmás? (si/no)")
+    send_whatsapp(reply_to, _confirmation_prompt(title, due_suffix))
+
+
+def _confirmation_prompt(title: str, due_suffix: str) -> str:
+    """Confirmation message that doubles as an optional-description prompt."""
+    return (
+        f"Registré: {title}{due_suffix}.\n"
+        "¿Confirmás? Respondé *si* para guardar o *no* para cancelar.\n"
+        "💬 O agregá una descripción (categoría, equipo, etc.) y la guardo con la tarea."
+    )
 
 
 def _insert_task_immediate(
@@ -731,7 +740,7 @@ def _handle_draft_reply(
         return
 
     due_suffix = f" — {extracted.due_date}" if extracted.due_date else ""
-    send_whatsapp(reply_to, f"Registré: {extracted.task_title}{due_suffix}. ¿Confirmás? (si/no)")
+    send_whatsapp(reply_to, _confirmation_prompt(extracted.task_title, due_suffix))
 
 
 _AFFIRM = {
@@ -778,7 +787,13 @@ def _handle_confirmation_reply(
     reply_text: str,
     reply_to: str,
 ) -> None:
-    """Resolve a si/no reply to a staged task: 'si' writes it, 'no' cancels it."""
+    """Resolve a reply to a staged task.
+
+    The confirmation prompt doubles as an optional-description gate:
+      - 'si' / 'dale' / 'ok'  → save the task as-is
+      - 'no' / 'cancelar'     → cancel, nothing saved
+      - any other free text   → store it as the task description, then save
+    """
     draft_id = draft_row["id"]
     decision = _classify_confirmation(reply_text)
 
@@ -787,14 +802,6 @@ def _handle_confirmation_reply(
         send_whatsapp(reply_to, "Cancelado. No registré la tarea.")
         return
 
-    if decision == "unknown":
-        send_whatsapp(
-            reply_to,
-            "¿Confirmás la tarea? Respondé *si* para registrarla o *no* para cancelarla.",
-        )
-        return
-
-    # decision == "yes" → write the staged task to `tasks` now.
     task_data = dict(draft_row.get("resolved_task") or {})
     if not task_data:
         log.error("Confirmation for draft=%s has no resolved_task payload", draft_id)
@@ -802,6 +809,21 @@ def _handle_confirmation_reply(
         send_whatsapp(reply_to, "No pude recuperar la tarea. Por favor enviala de nuevo.")
         return
 
+    # Free text (not a yes/no) is treated as a description to enrich the task.
+    if decision == "unknown":
+        detail = reply_text.strip()
+        existing = task_data.get("description")
+        merged = f"{existing}\n{detail}" if existing else detail
+        task_data["description"] = merged
+        payload = task_data.get("extraction_payload")
+        if isinstance(payload, dict):
+            payload["description"] = merged
+
+    _finalize_confirmed_task(db, draft_id, task_data, reply_to)
+
+
+def _finalize_confirmed_task(db, draft_id: str, task_data: dict, reply_to: str) -> None:
+    """Insert the staged task, mark the draft confirmed, and ack the sender."""
     task_data["idempotency_key"] = f"task:draft:{draft_id}"
     try:
         result = db.table("tasks").insert(task_data).execute()
