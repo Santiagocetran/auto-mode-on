@@ -205,13 +205,18 @@ def test_idempotency_same_message_sid_short_circuits():
 # ---------------------------------------------------------------------------
 
 
-def test_standalone_task_inserted():
-    db = make_db_mock(
-        inbound_messages=([{"id": INBOUND_ID}], None),
-        task_drafts=([], None),
-        tasks=([{"id": TASK_ID}], None),
-        people=([{"id": PERSON.id, "display_name": PERSON.display_name}], None),
-    )
+def test_standalone_stages_confirmation_not_task():
+    """A clear standalone task is staged for confirmation — NOT written to `tasks` yet."""
+    drafts_table = make_query_mock(data=[])
+    tasks_table = make_query_mock(data=[{"id": TASK_ID}])
+
+    db = MagicMock()
+    db.table.side_effect = lambda name: {
+        "inbound_messages": make_query_mock(data=[{"id": INBOUND_ID}]),
+        "task_drafts": drafts_table,
+        "tasks": tasks_table,
+        "people": make_query_mock(data=[{"id": PERSON.id, "display_name": PERSON.display_name}]),
+    }.get(name, make_query_mock(data=[]))
 
     with patch("app.services.capture.resolution.resolve_org", return_value=ORG), \
          patch("app.services.capture.resolution.resolve_sender", return_value=PERSON), \
@@ -223,11 +228,16 @@ def test_standalone_task_inserted():
         from app.services.capture import handle_inbound
         handle_inbound(FORM_DATA)
 
-    # Task was inserted (table("tasks").insert called)
-    db.table.assert_any_call("tasks")
-    # Confirmation sent
+    # Draft staged with the resolved task; nothing written to `tasks` yet.
+    drafts_table.insert.assert_called_once()
+    staged = drafts_table.insert.call_args[0][0]
+    assert staged["status"] == "awaiting_confirmation"
+    assert staged["resolved_task"]["task_title"] == EXTRACTED_STANDALONE.task_title
+    tasks_table.insert.assert_not_called()
+    # Confirmation prompt sent
     mock_send.assert_called_once()
-    assert "Registré:" in mock_send.call_args[0][1]
+    msg = mock_send.call_args[0][1]
+    assert "Registré:" in msg and "Confirmás" in msg
 
 
 def test_standalone_confirmation_includes_title():
@@ -258,12 +268,16 @@ def test_standalone_confirmation_includes_title():
 
 
 def test_matched_task_uses_project_id():
-    db = make_db_mock(
-        inbound_messages=([{"id": INBOUND_ID}], None),
-        task_drafts=([], None),
-        tasks=([{"id": TASK_ID}], None),
-        people=([{"id": PERSON.id, "display_name": PERSON.display_name}], None),
-    )
+    drafts_table = make_query_mock(data=[])
+    tasks_table = make_query_mock(data=[{"id": TASK_ID}])
+
+    db = MagicMock()
+    db.table.side_effect = lambda name: {
+        "inbound_messages": make_query_mock(data=[{"id": INBOUND_ID}]),
+        "task_drafts": drafts_table,
+        "tasks": tasks_table,
+        "people": make_query_mock(data=[{"id": PERSON.id, "display_name": PERSON.display_name}]),
+    }.get(name, make_query_mock(data=[]))
 
     with patch("app.services.capture.resolution.resolve_org", return_value=ORG), \
          patch("app.services.capture.resolution.resolve_sender", return_value=PERSON), \
@@ -275,7 +289,11 @@ def test_matched_task_uses_project_id():
         from app.services.capture import handle_inbound
         handle_inbound(FORM_DATA)
 
-    db.table.assert_any_call("tasks")
+    # Staged for confirmation with the matched project_id carried in resolved_task.
+    drafts_table.insert.assert_called_once()
+    staged = drafts_table.insert.call_args[0][0]
+    assert staged["resolved_task"]["project_id"] == "proj-1"
+    tasks_table.insert.assert_not_called()
     mock_send.assert_called_once()
 
 
@@ -404,25 +422,29 @@ def test_needs_clarification_draft_collision_sends_reply_not_task():
 # ---------------------------------------------------------------------------
 
 
-def test_pending_draft_reply_inserts_task_without_extraction():
+def test_project_choice_reply_stages_confirmation_without_extraction():
     draft_payload = EXTRACTED_STANDALONE.model_dump(mode="json")
     draft_row = {
         "id": "draft-1",
+        "status": "awaiting_project_choice",
         "extraction_payload": draft_payload,
         "offered_projects": [
             {"id": "proj-1", "name": "Informe financiador Q2", "slug": "informe-q2"},
             {"id": "proj-2", "name": "Taller nutrición", "slug": "taller"},
         ],
+        "resolved_task": None,
         "source_message_id": INBOUND_ID,
     }
 
     inbound_body_row = [{"body": "Yo me encargo del informe para el viernes"}]
+    drafts_table = make_query_mock(data=[draft_row])
+    tasks_table = make_query_mock(data=[{"id": TASK_ID}])
 
     def table_factory(name):
         return {
             "inbound_messages": make_query_mock(data=[{"id": "new-inbound-id"}]),
-            "task_drafts": make_query_mock(data=[draft_row]),
-            "tasks": make_query_mock(data=[{"id": TASK_ID}]),
+            "task_drafts": drafts_table,
+            "tasks": tasks_table,
             "people": make_query_mock(data=[]),
         }.get(name, make_query_mock(data=inbound_body_row))
 
@@ -444,10 +466,15 @@ def test_pending_draft_reply_inserts_task_without_extraction():
     # Extraction must NOT have run (pending draft consumed the turn)
     mock_extract.assert_not_called()
     mock_projects.assert_not_called()
-    # Task was inserted and confirmation sent
-    db.table.assert_any_call("tasks")
+    # Draft transitioned to awaiting_confirmation with the chosen project; no task yet.
+    drafts_table.update.assert_called_once()
+    updated = drafts_table.update.call_args[0][0]
+    assert updated["status"] == "awaiting_confirmation"
+    assert updated["resolved_task"]["project_id"] == "proj-1"
+    tasks_table.insert.assert_not_called()
     mock_send.assert_called_once()
-    assert "Registré:" in mock_send.call_args[0][1]
+    msg = mock_send.call_args[0][1]
+    assert "Registré:" in msg and "Confirmás" in msg
 
 
 # ---------------------------------------------------------------------------
@@ -472,11 +499,14 @@ def test_global_task_with_permission_inserted():
         }
     ]
 
+    drafts_table = make_query_mock(data=[])
+    tasks_table = make_query_mock(data=[{"id": TASK_ID}])
+
     def table_factory(name):
         return {
             "inbound_messages": make_query_mock(data=[{"id": INBOUND_ID}]),
-            "task_drafts": make_query_mock(data=[]),
-            "tasks": make_query_mock(data=[{"id": TASK_ID}]),
+            "task_drafts": drafts_table,
+            "tasks": tasks_table,
             "people": make_query_mock(data=[]),
             "organization_memberships": make_query_mock(data=membership_data),
             "organization_settings": make_query_mock(data=settings_data),
@@ -495,7 +525,11 @@ def test_global_task_with_permission_inserted():
         from app.services.capture import handle_inbound
         handle_inbound(FORM_DATA)
 
-    db.table.assert_any_call("tasks")
+    # Permitted global task is staged for confirmation (is_global carried through).
+    drafts_table.insert.assert_called_once()
+    staged = drafts_table.insert.call_args[0][0]
+    assert staged["resolved_task"]["is_global"] is True
+    tasks_table.insert.assert_not_called()
     mock_send.assert_called_once()
     assert "Registré:" in mock_send.call_args[0][1]
 
@@ -660,10 +694,10 @@ def test_audio_message_is_transcribed_then_captured():
         from app.services.capture import handle_inbound
         handle_inbound(audio_form)
 
-    # Audio was normalized, the transcript was fed to extraction, task inserted + confirmed.
+    # Audio was normalized, the transcript was fed to extraction, task staged for confirmation.
     mock_norm.assert_called_once()
     assert mock_extract.call_args.kwargs["message_body"] == "Preparar informe para el viernes"
-    db.table.assert_any_call("tasks")
+    db.table.assert_any_call("task_drafts")
     mock_send.assert_called_once()
     assert "Registré:" in mock_send.call_args[0][1]
 
@@ -714,3 +748,110 @@ def test_reply_to_uses_whatsapp_prefix():
 
     to_arg = mock_send.call_args[0][0]
     assert to_arg.startswith("whatsapp:")
+
+
+# ---------------------------------------------------------------------------
+# Confirmation gate — si/no reply to a staged task
+# ---------------------------------------------------------------------------
+
+
+def _confirmation_draft(resolved_task=None):
+    return {
+        "id": "draft-confirm-1",
+        "status": "awaiting_confirmation",
+        "extraction_payload": EXTRACTED_STANDALONE.model_dump(mode="json"),
+        "offered_projects": [],
+        "resolved_task": resolved_task
+        or {
+            "organization_id": ORG.id,
+            "project_id": None,
+            "is_global": False,
+            "task_title": "Preparar reporte",
+            "due_date": "2026-06-09",
+            "extraction_payload": EXTRACTED_STANDALONE.model_dump(mode="json"),
+        },
+        "source_message_id": INBOUND_ID,
+    }
+
+
+def _run_confirmation_reply(body, draft_row, tasks_table, drafts_table):
+    def table_factory(name):
+        return {
+            "inbound_messages": make_query_mock(data=[{"id": "inbound-reply"}]),
+            "task_drafts": drafts_table,
+            "tasks": tasks_table,
+            "people": make_query_mock(data=[]),
+        }.get(name, make_query_mock(data=[]))
+
+    db = MagicMock()
+    db.table.side_effect = table_factory
+
+    form = {**FORM_DATA, "Body": body, "MessageSid": "SMconfirm"}
+
+    with patch("app.services.capture.resolution.resolve_org", return_value=ORG), \
+         patch("app.services.capture.resolution.resolve_sender", return_value=PERSON), \
+         patch("app.services.capture.get_db", return_value=db), \
+         patch("app.services.capture.llm.extract_task") as mock_extract, \
+         patch("app.services.capture.llm.get_active_projects") as mock_projects, \
+         patch("app.services.capture.send_whatsapp") as mock_send:
+
+        from app.services.capture import handle_inbound
+        handle_inbound(form)
+
+    return mock_extract, mock_projects, mock_send
+
+
+@pytest.mark.parametrize("body", ["si", "Sí", "  sí!  ", "dale", "ok", "confirmo", "👍"])
+def test_confirmation_yes_inserts_task(body):
+    drafts_table = make_query_mock(data=[_confirmation_draft()])
+    tasks_table = make_query_mock(data=[{"id": TASK_ID}])
+
+    mock_extract, mock_projects, mock_send = _run_confirmation_reply(
+        body, _confirmation_draft(), tasks_table, drafts_table
+    )
+
+    # The reply is NOT re-extracted as a new task.
+    mock_extract.assert_not_called()
+    mock_projects.assert_not_called()
+    # The staged task is written, with a deterministic idempotency key, and draft confirmed.
+    tasks_table.insert.assert_called_once()
+    inserted = tasks_table.insert.call_args[0][0]
+    assert inserted["task_title"] == "Preparar reporte"
+    assert inserted["idempotency_key"] == "task:draft:draft-confirm-1"
+    drafts_table.update.assert_called_once()
+    assert drafts_table.update.call_args[0][0]["status"] == "confirmed"
+    mock_send.assert_called_once()
+    assert "Listo" in mock_send.call_args[0][1]
+
+
+@pytest.mark.parametrize("body", ["no", "No", "cancelar", "mejor no"])
+def test_confirmation_no_cancels_without_task(body):
+    drafts_table = make_query_mock(data=[_confirmation_draft()])
+    tasks_table = make_query_mock(data=[{"id": TASK_ID}])
+
+    _, _, mock_send = _run_confirmation_reply(
+        body, _confirmation_draft(), tasks_table, drafts_table
+    )
+
+    tasks_table.insert.assert_not_called()
+    drafts_table.update.assert_called_once()
+    assert drafts_table.update.call_args[0][0]["status"] == "cancelled"
+    mock_send.assert_called_once()
+    assert "ancel" in mock_send.call_args[0][1]
+
+
+@pytest.mark.parametrize("body", ["tal vez", "qué?", "y el otro tema"])
+def test_confirmation_unknown_reasks(body):
+    drafts_table = make_query_mock(data=[_confirmation_draft()])
+    tasks_table = make_query_mock(data=[{"id": TASK_ID}])
+
+    mock_extract, _, mock_send = _run_confirmation_reply(
+        body, _confirmation_draft(), tasks_table, drafts_table
+    )
+
+    # Neither a new extraction nor a task insert; draft left pending.
+    mock_extract.assert_not_called()
+    tasks_table.insert.assert_not_called()
+    drafts_table.update.assert_not_called()
+    mock_send.assert_called_once()
+    assert "Confirmás" in mock_send.call_args[0][1]
