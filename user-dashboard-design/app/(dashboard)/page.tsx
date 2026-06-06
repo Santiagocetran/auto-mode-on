@@ -192,14 +192,14 @@ async function DashboardContent({
                 <div>
                   <h2 className="text-base font-semibold tracking-tight">Profundizar análisis</h2>
                   <p className="mt-0.5 text-sm text-muted-foreground">
-                    Tendencias, carga y distribución en una vista dedicada con los mismos filtros.
+                    Carga por persona, proyectos y equipos con los mismos filtros.
                   </p>
                 </div>
                 <Link
-                  href={{ pathname: "/analytics", query: searchParams }}
+                  href={{ pathname: "/stats", query: searchParams }}
                   className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
                 >
-                  Abrir análisis detallado <ArrowRight className="h-4 w-4" />
+                  Abrir estadísticas <ArrowRight className="h-4 w-4" />
                 </Link>
               </div>
             </section>

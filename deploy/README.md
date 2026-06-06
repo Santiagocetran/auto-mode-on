@@ -13,13 +13,15 @@ Docker Compose para levantar **API** y **dashboard** en local. La base de datos 
 - Proyecto Supabase remoto con schema + seeds ya aplicados (`database/schema.sql`, `seeds.sql`, `seeds-auth.sql` vía SQL editor del equipo backend)
 - Si la base se creó **antes** del confirmation gate de WhatsApp, aplicar también las migraciones incrementales en orden:
   - `database/migrations/001_chatbot_proactivity.sql`
-  - `database/migrations/002_confirmation_gate.sql` (columna `resolved_task`, estado `awaiting_confirmation`)
+  - `database/migrations/002_confirmation_gate.sql` (enum `awaiting_confirmation`, columna `resolved_task`)
+  - `database/migrations/003_confirmation_gate_indexes.sql` (índices — **sesión aparte** en Supabase)
 
   ```bash
   DATABASE_URL='postgresql://...' ./database/apply-migration.sh 002_confirmation_gate.sql
+  DATABASE_URL='postgresql://...' ./database/apply-migration.sh 003_confirmation_gate_indexes.sql
   ```
 
-  O pegar el contenido del `.sql` en el SQL Editor de Supabase.
+  En el SQL Editor de Supabase: ejecutar **002 y 003 por separado** (dos clics en Run). Si corrés todo junto, Postgres falla al crear los índices.
 
 ## Inicio rápido
 

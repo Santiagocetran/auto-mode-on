@@ -6,6 +6,7 @@
 --   1. database/reset.sql
 --   2. database/schema.sql
 --   3. database/seeds.sql
+--   4. database/seeds-transactional.sql
 
 drop schema if exists public cascade;
 create schema public;

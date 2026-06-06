@@ -4,6 +4,7 @@ import { canAccessSection, effectiveDashboardSections } from "@/lib/permissions"
 export type NavIconName =
   | "layout-dashboard"
   | "chart-column"
+  | "calendar-days"
   | "users"
   | "list-todo"
   | "folder-kanban"
@@ -17,7 +18,8 @@ export type NavItem = { href: string; label: string; icon: NavIconName; section:
 
 const ALL_NAV: NavItem[] = [
   { href: "/", label: "Resumen", icon: "layout-dashboard", section: "summary" },
-  { href: "/analytics", label: "Análisis", icon: "chart-column", section: "summary" },
+  { href: "/stats", label: "Estadísticas", icon: "chart-column", section: "summary" },
+  { href: "/calendar", label: "Calendario", icon: "calendar-days", section: "calendar" },
   { href: "/people", label: "Personas", icon: "users", section: "team" },
   {
     href: "/tasks",
@@ -44,6 +46,7 @@ export function buildNavItems(
   const sections = effectiveDashboardSections(membership, permissions)
 
   return ALL_NAV.filter((item) => sections.includes(item.section))
+    .filter((item) => item.href !== "/calendar" || features.calendar_view)
     .map((item) => {
       if (!item.children) return item
       const children = item.children.filter((child) => {
