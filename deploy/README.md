@@ -11,6 +11,15 @@ Docker Compose para levantar **API** y **dashboard** en local. La base de datos 
 
 - Docker Desktop o Docker Engine + Compose v2
 - Proyecto Supabase remoto con schema + seeds ya aplicados (`database/schema.sql`, `seeds.sql`, `seeds-auth.sql` vía SQL editor del equipo backend)
+- Si la base se creó **antes** del confirmation gate de WhatsApp, aplicar también las migraciones incrementales en orden:
+  - `database/migrations/001_chatbot_proactivity.sql`
+  - `database/migrations/002_confirmation_gate.sql` (columna `resolved_task`, estado `awaiting_confirmation`)
+
+  ```bash
+  DATABASE_URL='postgresql://...' ./database/apply-migration.sh 002_confirmation_gate.sql
+  ```
+
+  O pegar el contenido del `.sql` en el SQL Editor de Supabase.
 
 ## Inicio rápido
 
