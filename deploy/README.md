@@ -1,36 +1,30 @@
-# Deploy local — Halketon
+# Deploy — Halketon
 
-Docker Compose para levantar el stack completo en desarrollo:
+Docker Compose para levantar **API** y **dashboard** en local. La base de datos y auth viven en **Supabase remoto** (no se levanta Postgres ni Kong en Docker).
 
 | Servicio | Puerto | Descripción |
 |----------|--------|-------------|
 | **dashboard** | [localhost:3000](http://localhost:3000) | Next.js user dashboard |
 | **api** | [localhost:8000](http://localhost:8000) | FastAPI (`/health`, webhooks WhatsApp) |
-| **kong** (Supabase API) | [localhost:54321](http://localhost:54321) | Gateway REST + Auth |
-| **postgres** | `localhost:54322` | Base de datos (acceso directo) |
 
 ## Requisitos
 
 - Docker Desktop o Docker Engine + Compose v2
-- ~4 GB RAM libres para el build del dashboard
+- Proyecto Supabase remoto con schema + seeds ya aplicados (`database/schema.sql`, `seeds.sql`, `seeds-auth.sql` vía SQL editor del equipo backend)
 
 ## Inicio rápido
 
 ```bash
 cd deploy
 cp .env.example .env
+# Completar SUPABASE_URL, SUPABASE_ANON_KEY y SUPABASE_SERVICE_ROLE_KEY
 docker compose up --build
 ```
 
-La primera vez tarda más: `db-init` aplica `database/schema.sql`, `seeds.sql`, grants y `seeds-auth.sql`.
-
-### URLs y credenciales demo
-
 - **Dashboard:** http://localhost:3000  
 - **API health:** http://localhost:8000/health  
-- **Supabase REST:** http://localhost:54321/rest/v1/
 
-Usuarios de prueba (tras `seeds-auth.sql`):
+Usuarios demo (si corriste `seeds-auth.sql` en Supabase):
 
 | Email | Password | Rol |
 |-------|----------|-----|
@@ -39,77 +33,50 @@ Usuarios de prueba (tras `seeds-auth.sql`):
 
 ## Variables de entorno
 
-Copia `deploy/.env.example` → `deploy/.env`. Las claves `ANON_KEY` y `SERVICE_ROLE_KEY` son las de Supabase local estándar; no las cambies salvo que rotes `JWT_SECRET` (y regeneres los JWT).
+| Variable | Uso |
+|----------|-----|
+| `SUPABASE_URL` | URL del proyecto (API + dashboard) |
+| `SUPABASE_ANON_KEY` | Clave anon (auth en el navegador) |
+| `SUPABASE_SERVICE_ROLE_KEY` | Lecturas/escrituras server-side |
+| `OPENAI_API_KEY`, `TWILIO_*` | Opcionales para WhatsApp / LLM en la API |
 
-Opcionales para probar WhatsApp / LLM en la API:
-
-- `OPENAI_API_KEY`
-- `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_WHATSAPP_FROM`
-
-Para exponer el webhook de Twilio al contenedor `api`, usa un túnel hacia el host (`ngrok http 8000`) y apunta el sandbox a `https://<tunnel>/whatsapp/...`.
+Para exponer el webhook de Twilio al contenedor `api`, usa un túnel (`ngrok http 8000`) y apunta el sandbox a `https://<tunnel>/whatsapp/...`.
 
 ## Comandos útiles
 
 ```bash
-# Solo infra (db + supabase local), sin apps
-docker compose up db auth rest kong db-init
-
 # Rebuild de una app
 docker compose up --build api
 docker compose up --build dashboard
 
-# Reset completo de la base (borra datos)
-docker compose down -v
-docker compose up --build
+# Detener
+docker compose down
 ```
 
 ## Desarrollo híbrido
 
-Puedes levantar solo la infra y correr las apps en el host:
+Levantá solo una app en Docker y la otra en el host, o ninguna en Docker:
 
 ```bash
-docker compose up db auth rest kong db-init
+# Solo API en Docker
+docker compose up api
+
+# Apps en el host (mismas credenciales de Supabase)
+cd apps/api && uvicorn app.main:app --reload --port 8000
+cd user-dashboard-design && bun run dev
 ```
 
-**API** (`apps/api/.env`):
-
-```env
-SUPABASE_URL=http://localhost:54321
-SUPABASE_SERVICE_ROLE_KEY=<SERVICE_ROLE_KEY de deploy/.env>
-```
-
-```bash
-cd apps/api
-uvicorn app.main:app --reload --port 8000
-```
-
-**Dashboard** (`user-dashboard-design/.env.local`):
-
-```env
-DATA_SOURCE=supabase
-NEXT_PUBLIC_SUPABASE_URL=http://localhost:54321
-NEXT_PUBLIC_SUPABASE_ANON_KEY=<ANON_KEY de deploy/.env>
-SUPABASE_SERVICE_ROLE_KEY=<SERVICE_ROLE_KEY de deploy/.env>
-DEMO_ORG_SLUG=fundacion-esperanza
-```
-
-```bash
-cd user-dashboard-design
-bun run dev
-```
+Para desarrollo local sin Docker, usá `user-dashboard-design/.env.local` y `apps/api/.env` con las mismas variables de Supabase.
 
 ## Estructura
 
 ```
 deploy/
-├── docker-compose.yml      # Orquestación
-├── .env.example            # Plantilla de secrets
-├── docker/
-│   ├── api/Dockerfile
-│   └── dashboard/Dockerfile
-├── kong/kong.yml           # Rutas /auth/v1 y /rest/v1
-├── postgres/grants.sql     # Permisos PostgREST
-└── scripts/init-db.sh      # Migración + seeds al primer arranque
+├── docker-compose.yml
+├── .env.example
+└── docker/
+    ├── api/Dockerfile
+    └── dashboard/Dockerfile
 ```
 
-Los SQL de dominio viven en `database/` en la raíz del repo; el deploy solo los monta y ejecuta.
+Schema y seeds: `database/` en la raíz del repo — se aplican en el Supabase remoto, no desde este compose.
