@@ -53,6 +53,7 @@ create type project_channel as enum ('dashboard', 'whatsapp', 'meeting');
 
 create type task_draft_status as enum (
   'awaiting_project_choice',
+  'awaiting_confirmation',
   'confirmed',
   'expired',
   'cancelled'
@@ -926,6 +927,8 @@ create table task_drafts (
   people_id            uuid references people (id) on delete set null,
   extraction_payload   jsonb not null,
   offered_projects     jsonb not null default '[]'::jsonb,
+  -- Fully-resolved task row staged while awaiting the sender's si/no confirmation.
+  resolved_task        jsonb,
   status               task_draft_status not null default 'awaiting_project_choice',
   expires_at           timestamptz not null default (now() + interval '24 hours'),
   resolved_task_id     uuid references tasks (id) on delete set null,
@@ -935,12 +938,12 @@ create table task_drafts (
 
 create index task_drafts_sender_pending_idx
   on task_drafts (organization_id, sender_phone)
-  where status = 'awaiting_project_choice';
+  where status in ('awaiting_project_choice', 'awaiting_confirmation');
 
--- One pending project-disambiguation draft per sender per org.
+-- One open conversation draft per sender per org (project choice OR confirmation).
 create unique index task_drafts_one_pending
   on task_drafts (organization_id, sender_phone)
-  where status = 'awaiting_project_choice';
+  where status in ('awaiting_project_choice', 'awaiting_confirmation');
 
 create trigger task_drafts_set_updated_at
   before update on task_drafts

@@ -9,6 +9,7 @@ Flow (per plan):
 """
 
 import logging
+import unicodedata
 from typing import Any, Optional
 
 from app.config import get_settings
@@ -81,25 +82,37 @@ def handle_inbound(form_data: dict) -> None:
             {"body": body, "media_url": form_data.get("MediaUrl0")}
         ).eq("id", inbound_id).execute()
 
-    # 4. Pending-draft branch — resolve before running extraction
+    # 4. Pending-conversation branch — a draft awaiting either a project choice
+    #    or a si/no confirmation. Resolve it before running a fresh extraction so
+    #    replies like "si" are never mistaken for a new task.
     pending = (
         db.table("task_drafts")
-        .select("id, extraction_payload, offered_projects, source_message_id")
+        .select("id, status, extraction_payload, offered_projects, resolved_task, source_message_id")
         .eq("organization_id", org.id)
         .eq("sender_phone", sender_phone_e164)
-        .eq("status", "awaiting_project_choice")
+        .in_("status", ["awaiting_project_choice", "awaiting_confirmation"])
         .limit(1)
         .execute()
     )
     if pending.data:
-        _handle_draft_reply(
-            db=db,
-            draft_row=pending.data[0],
-            reply_text=body,
-            org=org,
-            person=person,
-            reply_to=reply_to,
-        )
+        draft_row = pending.data[0]
+        if draft_row.get("status") == "awaiting_confirmation":
+            _handle_confirmation_reply(
+                db=db,
+                draft_row=draft_row,
+                reply_text=body,
+                reply_to=reply_to,
+            )
+        else:
+            _handle_draft_reply(
+                db=db,
+                draft_row=draft_row,
+                reply_text=body,
+                org=org,
+                person=person,
+                sender_phone=sender_phone_e164,
+                reply_to=reply_to,
+            )
         return
 
     # 5. Run extraction
@@ -140,6 +153,7 @@ def handle_inbound(form_data: dict) -> None:
             inbound_id=inbound_id,
             body=body,
             reply_to=reply_to,
+            sender_phone=sender_phone_e164,
         )
         return
 
@@ -186,6 +200,8 @@ def handle_inbound(form_data: dict) -> None:
             inbound_id=inbound_id,
             source_text=body,
             reply_to=reply_to,
+            person=person,
+            sender_phone=sender_phone_e164,
         )
         return
 
@@ -201,6 +217,8 @@ def handle_inbound(form_data: dict) -> None:
             inbound_id=inbound_id,
             source_text=body,
             reply_to=reply_to,
+            person=person,
+            sender_phone=sender_phone_e164,
         )
         return
 
@@ -323,8 +341,7 @@ def _map_owner(
     return None, owner_str.strip()
 
 
-def _insert_task(
-    db,
+def _build_task_data(
     extracted: ExtractedTask,
     org: Org,
     project_id: Optional[str],
@@ -333,10 +350,9 @@ def _insert_task(
     owner_name: str,
     inbound_id: Optional[str],
     source_text: str,
-    reply_to: str,
-) -> None:
-    idempotency_key = f"task:msg:{inbound_id}" if inbound_id else None
-    task_data: dict[str, Any] = {
+) -> dict[str, Any]:
+    """Build the `tasks` row. The idempotency_key is added at insert time."""
+    return {
         "organization_id": org.id,
         "project_id": project_id,
         "is_global": is_global,
@@ -352,18 +368,84 @@ def _insert_task(
         "source_text": source_text,
         "confidence": extracted.confidence,
         "extraction_payload": extracted.model_dump(mode="json"),
-        "idempotency_key": idempotency_key,
     }
 
+
+def _stage_confirmation(
+    db,
+    org: Org,
+    person: Person,
+    sender_phone: str,
+    inbound_id: Optional[str],
+    task_data: dict[str, Any],
+    title: str,
+    due_date: Optional[str],
+    reply_to: str,
+) -> None:
+    """Stage a resolved task in a draft and ask the sender to confirm.
+
+    The task is NOT written to `tasks` yet — that happens in
+    _handle_confirmation_reply once the sender replies "si".
+    """
+    draft_data = {
+        "organization_id": org.id,
+        "source_message_id": inbound_id,
+        "sender_phone": sender_phone,
+        "people_id": person.id,
+        "extraction_payload": task_data["extraction_payload"],
+        "resolved_task": task_data,
+        "status": "awaiting_confirmation",
+    }
     try:
-        db.table("tasks").insert(task_data).execute()
+        db.table("task_drafts").insert(draft_data).execute()
     except Exception:
-        log.exception("Failed to insert task for org=%s", org.id)
-        send_whatsapp(reply_to, "Hubo un error registrando la tarea. Por favor intentá de nuevo.")
+        # task_drafts_one_pending constraint: a conversation is already open.
+        log.warning("Confirmation draft conflict for sender=%s org=%s", sender_phone, org.id)
+        send_whatsapp(
+            reply_to,
+            "Tenés una tarea pendiente de confirmar. Respondé *si* o *no* primero.",
+        )
         return
 
-    due_suffix = f" — {extracted.due_date}" if extracted.due_date else ""
-    send_whatsapp(reply_to, f"Registré: {extracted.task_title}{due_suffix}. ¿Confirmás?")
+    due_suffix = f" — {due_date}" if due_date else ""
+    send_whatsapp(reply_to, f"Registré: {title}{due_suffix}. ¿Confirmás? (si/no)")
+
+
+def _insert_task(
+    db,
+    extracted: ExtractedTask,
+    org: Org,
+    project_id: Optional[str],
+    is_global: bool,
+    owner_id: Optional[str],
+    owner_name: str,
+    inbound_id: Optional[str],
+    source_text: str,
+    reply_to: str,
+    person: Person,
+    sender_phone: str,
+) -> None:
+    task_data = _build_task_data(
+        extracted=extracted,
+        org=org,
+        project_id=project_id,
+        is_global=is_global,
+        owner_id=owner_id,
+        owner_name=owner_name,
+        inbound_id=inbound_id,
+        source_text=source_text,
+    )
+    _stage_confirmation(
+        db=db,
+        org=org,
+        person=person,
+        sender_phone=sender_phone,
+        inbound_id=inbound_id,
+        task_data=task_data,
+        title=extracted.task_title,
+        due_date=extracted.due_date,
+        reply_to=reply_to,
+    )
 
 
 def _handle_global(
@@ -376,6 +458,7 @@ def _handle_global(
     inbound_id: Optional[str],
     body: str,
     reply_to: str,
+    sender_phone: str,
 ) -> None:
     if not _can_create_global(db, org.id, person):
         send_whatsapp(
@@ -394,6 +477,8 @@ def _handle_global(
         inbound_id=inbound_id,
         source_text=body,
         reply_to=reply_to,
+        person=person,
+        sender_phone=sender_phone,
     )
 
 
@@ -453,9 +538,10 @@ def _handle_draft_reply(
     reply_text: str,
     org: Org,
     person: Person,
+    sender_phone: str,
     reply_to: str,
 ) -> None:
-    """Parse the user's reply to a disambiguation menu and insert the final task."""
+    """Parse the reply to a disambiguation menu and stage the task for confirmation."""
     draft_id = draft_row["id"]
     offered_projects: list[dict] = draft_row["offered_projects"] or []
     extraction_payload: dict = draft_row["extraction_payload"]
@@ -510,40 +596,117 @@ def _handle_draft_reply(
         if inb.data:
             source_text = inb.data[0].get("body") or ""
 
-    idempotency_key = f"task:draft:{draft_id}"
-    task_data: dict[str, Any] = {
-        "organization_id": org.id,
-        "project_id": project_id,
-        "is_global": is_global,
-        "owner_id": owner_id,
-        "owner_name": owner_name,
-        "task_title": extracted.task_title,
-        "description": extracted.description,
-        "due_date": extracted.due_date,
-        "status": extracted.status,
-        "priority": extracted.priority,
-        "source_message_id": draft_row.get("source_message_id"),
-        "source_type": "whatsapp",
-        "source_text": source_text,
-        "confidence": extracted.confidence,
-        "extraction_payload": extraction_payload,
-        "idempotency_key": idempotency_key,
-    }
+    task_data = _build_task_data(
+        extracted=extracted,
+        org=org,
+        project_id=project_id,
+        is_global=is_global,
+        owner_id=owner_id,
+        owner_name=owner_name,
+        inbound_id=draft_row.get("source_message_id"),
+        source_text=source_text,
+    )
 
+    # Transition this same draft from project-choice → confirmation. The task is
+    # written to `tasks` only once the sender replies "si" (_handle_confirmation_reply).
     try:
-        task_result = db.table("tasks").insert(task_data).execute()
-        task_id = task_result.data[0]["id"]
+        db.table("task_drafts").update(
+            {"status": "awaiting_confirmation", "resolved_task": task_data}
+        ).eq("id", draft_id).execute()
     except Exception:
-        log.exception("Failed to insert task from draft=%s", draft_id)
-        send_whatsapp(reply_to, "Hubo un error creando la tarea. Por favor intentá de nuevo.")
+        log.exception("Failed to stage confirmation for draft=%s", draft_id)
+        send_whatsapp(reply_to, "Hubo un error procesando la tarea. Por favor intentá de nuevo.")
+        return
+
+    due_suffix = f" — {extracted.due_date}" if extracted.due_date else ""
+    send_whatsapp(reply_to, f"Registré: {extracted.task_title}{due_suffix}. ¿Confirmás? (si/no)")
+
+
+_AFFIRM = {
+    "si", "sii", "siii", "sip", "sisi", "dale", "ok", "oka", "okok",
+    "okay", "okey", "oki", "listo", "va", "vale", "bien", "confirmo",
+    "confirmado", "confirmar", "correcto", "exacto", "perfecto", "claro",
+    "obvio", "yes", "👍", "👍🏻", "👍🏼", "👍🏽", "👍🏾", "👍🏿", "✅",
+}
+# Negation words. Checked against ANY token (so "mejor no" cancels too), so this
+# set must stay strict — only words that unambiguously mean "no".
+_NEGATE = {
+    "no", "nop", "nope", "noo", "cancelar", "cancela", "cancelo",
+    "negativo", "descartar", "descarta", "anular", "anula", "❌",
+}
+
+
+def _classify_confirmation(text: str) -> str:
+    """Classify a confirmation reply as 'yes', 'no', or 'unknown'.
+
+    Negation dominates: any negation token anywhere means "no" (handles "mejor no").
+    Affirmation is matched only on the whole reply or its first word to avoid false
+    positives from longer sentences.
+    """
+    # Strip accents so "sí" == "si", lowercase, drop surrounding punctuation.
+    decomposed = unicodedata.normalize("NFKD", text)
+    norm = "".join(c for c in decomposed if not unicodedata.combining(c)).lower()
+    stripped = norm.strip(" \t\n.!¡¿?,;:")
+    words = [w.strip(".!¡¿?,;:") for w in stripped.split()]
+
+    if any(w in _NEGATE for w in words):
+        return "no"
+    if "cancel" in stripped or "descart" in stripped or "anul" in stripped:
+        return "no"
+    if stripped in _AFFIRM or (words and words[0] in _AFFIRM):
+        return "yes"
+    if "confirm" in stripped:
+        return "yes"
+    return "unknown"
+
+
+def _handle_confirmation_reply(
+    db,
+    draft_row: dict,
+    reply_text: str,
+    reply_to: str,
+) -> None:
+    """Resolve a si/no reply to a staged task: 'si' writes it, 'no' cancels it."""
+    draft_id = draft_row["id"]
+    decision = _classify_confirmation(reply_text)
+
+    if decision == "no":
+        db.table("task_drafts").update({"status": "cancelled"}).eq("id", draft_id).execute()
+        send_whatsapp(reply_to, "Cancelado. No registré la tarea.")
+        return
+
+    if decision == "unknown":
+        send_whatsapp(
+            reply_to,
+            "¿Confirmás la tarea? Respondé *si* para registrarla o *no* para cancelarla.",
+        )
+        return
+
+    # decision == "yes" → write the staged task to `tasks` now.
+    task_data = dict(draft_row.get("resolved_task") or {})
+    if not task_data:
+        log.error("Confirmation for draft=%s has no resolved_task payload", draft_id)
+        db.table("task_drafts").update({"status": "cancelled"}).eq("id", draft_id).execute()
+        send_whatsapp(reply_to, "No pude recuperar la tarea. Por favor enviala de nuevo.")
+        return
+
+    task_data["idempotency_key"] = f"task:draft:{draft_id}"
+    try:
+        result = db.table("tasks").insert(task_data).execute()
+        task_id = result.data[0]["id"]
+    except Exception:
+        log.exception("Failed to insert confirmed task from draft=%s", draft_id)
+        send_whatsapp(reply_to, "Hubo un error registrando la tarea. Por favor intentá de nuevo.")
         return
 
     db.table("task_drafts").update(
         {"status": "confirmed", "resolved_task_id": task_id}
     ).eq("id", draft_id).execute()
 
-    due_suffix = f" — {extracted.due_date}" if extracted.due_date else ""
-    send_whatsapp(reply_to, f"Registré: {extracted.task_title}{due_suffix}. ¿Confirmás?")
+    title = task_data.get("task_title", "la tarea")
+    due = task_data.get("due_date")
+    due_suffix = f" — {due}" if due else ""
+    send_whatsapp(reply_to, f"Listo ✅ {title}{due_suffix} quedó registrada.")
 
 
 def _parse_project_choice(
