@@ -3,7 +3,6 @@
 import json
 import logging
 from functools import lru_cache
-from pathlib import Path
 from typing import Any
 
 from openai import OpenAI
@@ -11,13 +10,13 @@ from openai import OpenAI
 from app.config import get_settings
 from app.db.client import get_db
 from app.models.extraction import ExtractedTask
+from app.prompt_paths import task_extraction_prompt_path
 
 log = logging.getLogger(__name__)
 
 # Canonical, P4-owned prompt. Single source of truth — loaded at runtime so a prompt
-# edit takes effect without touching this module. Resolved relative to the repo root
-# (apps/api/app/services/llm.py → parents[4] == repo root).
-_PROMPT_PATH = Path(__file__).resolve().parents[4] / "prompts" / "task-extraction.md"
+# edit takes effect without touching this module.
+_PROMPT_PATH = task_extraction_prompt_path()
 
 # Appended to the canonical doc to pin runtime behavior (the doc is written for the
 # n8n era and describes orchestration steps the LLM should ignore).
