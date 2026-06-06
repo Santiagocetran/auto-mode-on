@@ -10,7 +10,11 @@ client = TestClient(app)
 def test_health_ok():
     res = client.get("/health")
     assert res.status_code == 200
-    assert res.json() == {"ok": True}
+    body = res.json()
+    assert body["ok"] is True
+    # Build marker lets us confirm which code a deployment is actually running.
+    assert body["build"] == "confirmation-gate"
+    assert "version" in body
 
 
 def test_routers_mounted():
