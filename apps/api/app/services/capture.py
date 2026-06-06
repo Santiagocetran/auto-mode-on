@@ -11,9 +11,10 @@ Flow (per plan):
 import logging
 from typing import Any, Optional
 
+from app.config import get_settings
 from app.db.client import get_db
 from app.models.extraction import ExtractedTask
-from app.services import llm, resolution
+from app.services import llm, resolution, transcription
 from app.services.resolution import Org, Person, normalize_twilio_whatsapp, strip_whatsapp_prefix
 from app.services.twilio_client import send_whatsapp
 
@@ -58,6 +59,27 @@ def handle_inbound(form_data: dict) -> None:
         log.info("Unregistered sender %s in org %s", sender_phone_e164, org.id)
         send_whatsapp(reply_to, "No estás registrado en esta organización. Contactá al administrador.")
         return
+
+    # 3b. Normalize the message to text — transcribe audio voice notes. Done after
+    # the sender gate so we never spend a transcription on an unregistered number.
+    settings = get_settings()
+    try:
+        message_text = transcription.normalize_message(form_data, settings)
+    except transcription.MessageNormalizationError:
+        log.info("Unparseable message from %s (no text / unsupported media)", sender_phone_e164)
+        send_whatsapp(reply_to, "No pude entender el mensaje. Si enviaste un audio, probá de nuevo o escribilo por texto.")
+        return
+    except transcription.TranscriptionError:
+        log.exception("Audio transcription failed for org=%s", org.id)
+        send_whatsapp(reply_to, "No pude transcribir el audio. ¿Podés escribirlo por texto?")
+        return
+
+    if message_text != body:
+        # Audio was transcribed (or body normalized) — persist the resolved text + media URL.
+        body = message_text
+        db.table("inbound_messages").update(
+            {"body": body, "media_url": form_data.get("MediaUrl0")}
+        ).eq("id", inbound_id).execute()
 
     # 4. Pending-draft branch — resolve before running extraction
     pending = (

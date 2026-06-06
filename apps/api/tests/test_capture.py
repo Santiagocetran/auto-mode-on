@@ -8,6 +8,7 @@ from tests.conftest import make_db_mock, make_query_mock
 
 from app.models.extraction import ExtractedTask, ProjectResolution
 from app.services.resolution import Org, Person
+from app.services.transcription import MessageNormalizationError
 
 # ---------------------------------------------------------------------------
 # Fixtures / constants
@@ -619,6 +620,72 @@ def test_low_confidence_sends_rephrase_request():
     assert len(task_calls) == 0
     mock_send.assert_called_once()
     assert "entendí" in mock_send.call_args[0][1].lower()
+
+
+# ---------------------------------------------------------------------------
+# Audio voice note → transcribed → task
+# ---------------------------------------------------------------------------
+
+
+def test_audio_message_is_transcribed_then_captured():
+    """A voice note (audio media, empty Body) is transcribed and the transcript
+    drives extraction; the inbound row is updated with the resolved text."""
+    audio_form = {
+        "To": "whatsapp:+14155238886",
+        "From": "whatsapp:+5491112345678",
+        "Body": "",
+        "ProfileName": "Mateo",
+        "MessageSid": "SMaudio1",
+        "NumMedia": "1",
+        "MediaUrl0": "https://api.twilio.com/media/abc",
+        "MediaContentType0": "audio/ogg",
+    }
+
+    db = make_db_mock(
+        inbound_messages=([{"id": INBOUND_ID}], None),
+        task_drafts=([], None),
+        tasks=([{"id": TASK_ID}], None),
+        people=([{"id": PERSON.id, "display_name": PERSON.display_name}], None),
+    )
+
+    with patch("app.services.capture.resolution.resolve_org", return_value=ORG), \
+         patch("app.services.capture.resolution.resolve_sender", return_value=PERSON), \
+         patch("app.services.capture.get_db", return_value=db), \
+         patch("app.services.capture.transcription.normalize_message",
+               return_value="Preparar informe para el viernes") as mock_norm, \
+         patch("app.services.capture.llm.extract_task", return_value=EXTRACTED_STANDALONE) as mock_extract, \
+         patch("app.services.capture.llm.get_active_projects", return_value=ACTIVE_PROJECTS), \
+         patch("app.services.capture.send_whatsapp") as mock_send:
+
+        from app.services.capture import handle_inbound
+        handle_inbound(audio_form)
+
+    # Audio was normalized, the transcript was fed to extraction, task inserted + confirmed.
+    mock_norm.assert_called_once()
+    assert mock_extract.call_args.kwargs["message_body"] == "Preparar informe para el viernes"
+    db.table.assert_any_call("tasks")
+    mock_send.assert_called_once()
+    assert "Registré:" in mock_send.call_args[0][1]
+
+
+def test_unparseable_message_asks_to_retry():
+    """No text and no supported media → friendly reply, no task."""
+    bad_form = {**FORM_DATA, "Body": "", "MessageSid": "SMbad1"}
+    db = make_db_mock(inbound_messages=([{"id": INBOUND_ID}], None), task_drafts=([], None))
+
+    with patch("app.services.capture.resolution.resolve_org", return_value=ORG), \
+         patch("app.services.capture.resolution.resolve_sender", return_value=PERSON), \
+         patch("app.services.capture.get_db", return_value=db), \
+         patch("app.services.capture.transcription.normalize_message",
+               side_effect=MessageNormalizationError), \
+         patch("app.services.capture.llm.extract_task") as mock_extract, \
+         patch("app.services.capture.send_whatsapp") as mock_send:
+
+        from app.services.capture import handle_inbound
+        handle_inbound(bad_form)
+
+    mock_extract.assert_not_called()
+    mock_send.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
