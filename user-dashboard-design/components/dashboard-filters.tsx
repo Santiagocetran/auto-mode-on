@@ -87,7 +87,7 @@ function FilterSelect({
   return (
     <div className="flex flex-col gap-1.5">
       <span className="text-xs font-medium text-muted-foreground">{label}</span>
-      <Select value={value} onValueChange={(v) => onChange(param, v)}>
+      <Select value={value} onValueChange={(v) => v && onChange(param, v)}>
         <SelectTrigger className="h-9 w-full bg-background">
           <SelectValue />
         </SelectTrigger>
@@ -333,7 +333,7 @@ export function DashboardFilters({
         <Popover>
           <PopoverTrigger
             render={
-              <Button variant="outline" size="sm" className="gap-1.5">
+              <Button variant="outline" size="sm" className="gap-1.5 bg-background">
                 <SlidersHorizontal className="h-3.5 w-3.5" />
                 Filtros avanzados
                 {activeChips.length > 0 ? (

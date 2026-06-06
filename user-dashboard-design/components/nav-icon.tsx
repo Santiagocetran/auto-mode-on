@@ -3,6 +3,7 @@
 import type { NavIconName } from "@/lib/nav"
 import {
   LayoutDashboard,
+  BarChart3,
   Users,
   FolderKanban,
   ListTodo,
@@ -15,6 +16,7 @@ import {
 
 const ICONS: Record<NavIconName, LucideIcon> = {
   "layout-dashboard": LayoutDashboard,
+  "chart-column": BarChart3,
   users: Users,
   "list-todo": ListTodo,
   "folder-kanban": FolderKanban,

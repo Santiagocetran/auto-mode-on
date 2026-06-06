@@ -1,5 +1,4 @@
 import type { TaskStatus, TaskPriority, ProjectStatus, MemberRole } from "@/lib/types"
-import { referenceNow } from "@/lib/data-source"
 
 export const REFERENCE_DATE = new Date("2026-06-06T12:00:00Z")
 
@@ -17,10 +16,14 @@ export function formatDate(iso: string | null): string {
   return new Date(iso).toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric" })
 }
 
-export function relativeDue(iso: string | null): { label: string; overdue: boolean } {
+export function relativeDue(
+  iso: string | null,
+  referenceDate: string | Date = REFERENCE_DATE,
+): { label: string; overdue: boolean } {
   if (!iso) return { label: "Sin fecha límite", overdue: false }
   const due = new Date(iso)
-  const diffDays = Math.round((due.getTime() - referenceNow().getTime()) / (1000 * 60 * 60 * 24))
+  const reference = new Date(referenceDate)
+  const diffDays = Math.round((due.getTime() - reference.getTime()) / (1000 * 60 * 60 * 24))
   if (diffDays < 0) return { label: `${Math.abs(diffDays)} d de retraso`, overdue: true }
   if (diffDays === 0) return { label: "Vence hoy", overdue: false }
   if (diffDays === 1) return { label: "Vence mañana", overdue: false }
