@@ -21,7 +21,7 @@ export function ProjectCard({
   return (
     <Link
       href={`/tasks/projects/${project.slug}`}
-      className="flex flex-col rounded-xl border border-border bg-card p-5 transition-colors hover:border-primary/50"
+      className="group flex h-full flex-col rounded-xl border border-border bg-card p-5 transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-sm"
     >
       <div className="flex items-start justify-between gap-3">
         <h3 className="text-sm font-semibold leading-snug text-pretty">{project.name}</h3>
@@ -42,7 +42,10 @@ export function ProjectCard({
           </span>
         </div>
         <div className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-muted">
-          <div className="h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
+          <div
+            className="h-full rounded-full bg-primary transition-all group-hover:bg-primary/85"
+            style={{ width: `${pct}%` }}
+          />
         </div>
       </div>
 

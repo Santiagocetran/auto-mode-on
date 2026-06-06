@@ -14,7 +14,13 @@ const TABS: { key: TabKey; label: string; href: string }[] = [
   { key: "blocked", label: "Bloqueadas", href: "/tasks/list?estado=blocked" },
 ]
 
-export function OperationalLists({ lists }: { lists: DashboardSummary["lists"] }) {
+export function OperationalLists({
+  lists,
+  referenceDate,
+}: {
+  lists: DashboardSummary["lists"]
+  referenceDate: string
+}) {
   const counts: Record<TabKey, number> = {
     overdue: lists.overdue.length,
     dueSoon: lists.dueSoon.length,
@@ -37,9 +43,9 @@ export function OperationalLists({ lists }: { lists: DashboardSummary["lists"] }
   }
 
   return (
-    <section className="rounded-xl border border-border bg-card">
+    <section className="overflow-hidden rounded-xl border border-border bg-card shadow-xs">
       <Tabs defaultValue={defaultTab}>
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-muted/20 px-4 py-3">
           <TabsList variant="line" className="h-auto w-auto gap-0 bg-transparent p-0">
             {TABS.map((tab) => (
               <TabsTrigger
@@ -60,18 +66,26 @@ export function OperationalLists({ lists }: { lists: DashboardSummary["lists"] }
         </div>
 
         {TABS.map((tab) => (
-          <TabsContent key={tab.key} value={tab.key} className="px-4 py-3">
+          <TabsContent key={tab.key} value={tab.key} className="p-0">
             {itemsByTab[tab.key].length === 0 ? (
-              <EmptyState message={emptyByTab[tab.key]} />
+              <div className="p-4">
+                <EmptyState message={emptyByTab[tab.key]} />
+              </div>
             ) : (
-              <div className="space-y-2">
+              <div className="divide-y divide-border">
                 {itemsByTab[tab.key].map((t) => (
-                  <TaskItem key={t.id} task={t} projectName={t.projectName} />
+                  <TaskItem
+                    key={t.id}
+                    task={t}
+                    projectName={t.projectName}
+                    variant="flat"
+                    referenceDate={referenceDate}
+                  />
                 ))}
               </div>
             )}
             {itemsByTab[tab.key].length > 0 ? (
-              <div className="mt-3 text-right">
+              <div className="border-t border-border bg-muted/15 px-4 py-3 text-right">
                 <Link href={tab.href} className="text-xs text-primary hover:underline">
                   Ver todas →
                 </Link>

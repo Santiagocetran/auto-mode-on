@@ -2,6 +2,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { TaskItem } from "@/components/task-item"
 import { EmptyState } from "@/components/dashboard-ui"
 import type { TaskWithRefs } from "@/lib/types"
+import { referenceNow } from "@/lib/data-source"
 
 export function TaskList({
   pendingTasks,
@@ -14,6 +15,8 @@ export function TaskList({
   showProject?: boolean
   showScope?: boolean
 }) {
+  const referenceDate = referenceNow().toISOString()
+
   return (
     <Tabs defaultValue="pending">
       <TabsList>
@@ -33,6 +36,7 @@ export function TaskList({
                 owner={{ name: task.ownerName }}
                 projectName={showProject ? task.projectName : undefined}
                 showScope={showScope}
+                referenceDate={referenceDate}
               />
             ))}
           </div>
@@ -51,6 +55,7 @@ export function TaskList({
                 owner={{ name: task.ownerName }}
                 projectName={showProject ? task.projectName : undefined}
                 showScope={showScope}
+                referenceDate={referenceDate}
               />
             ))}
           </div>
