@@ -10,6 +10,7 @@ import { DateRangeFilter } from "@/components/date-range-filter"
 import { cn } from "@/lib/utils"
 import { initials, roleMeta } from "@/lib/ui-helpers"
 import { resolveRange, formatRangeLabel, type RangePreset } from "@/lib/date-ranges"
+import { referenceNow } from "@/lib/data-source"
 import { ArrowLeft, Mail, Phone } from "lucide-react"
 
 const VALID_PRESETS: RangePreset[] = [
@@ -42,6 +43,7 @@ export default async function ProfilePage({
   const role = roleMeta[membership.role]
   const range = resolveRange(preset, sp.desde, sp.hasta)
   const rangeLabel = range ? formatRangeLabel(range) : "Todo el tiempo"
+  const referenceDate = referenceNow().toISOString()
 
   return (
     <div className="flex flex-col">
@@ -133,7 +135,7 @@ export default async function ProfilePage({
             ) : (
               <div className="flex flex-col gap-2">
                 {upcomingTasks.map((task) => (
-                  <TaskItem key={task.id} task={task} />
+                  <TaskItem key={task.id} task={task} referenceDate={referenceDate} />
                 ))}
               </div>
             )}
@@ -145,7 +147,7 @@ export default async function ProfilePage({
             ) : (
               <div className="flex flex-col gap-2">
                 {completedTasks.map((task) => (
-                  <TaskItem key={task.id} task={task} />
+                  <TaskItem key={task.id} task={task} referenceDate={referenceDate} />
                 ))}
               </div>
             )}

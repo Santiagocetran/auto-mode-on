@@ -28,6 +28,13 @@ class Settings(BaseSettings):
     # Shared secret so only the n8n cron can call POST /reminders/run
     reminder_trigger_secret: str = ""
 
+    # Exact public base URL used to reconstruct the webhook URL for Twilio signature
+    # validation (e.g. "https://abc123.ngrok.io"). Must NOT have a trailing slash.
+    public_webhook_base_url: str = ""
+
+    # Allow skipping Twilio signature validation in local dev (never set in prod).
+    skip_twilio_signature_validation: bool = False
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -54,17 +54,17 @@ export function DateRangeFilter({
   }
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-1.5">
+    <div className="flex flex-col gap-3 xl:items-end">
+      <div className="flex flex-wrap items-center gap-1">
         {RANGE_PRESETS.map((r) => (
           <Button
             key={r.value}
             type="button"
-            variant={preset === r.value ? "default" : "outline"}
+            variant={preset === r.value ? "secondary" : "ghost"}
             size="sm"
             className={cn(
-              "shrink-0",
-              preset === r.value && "shadow-sm",
+              "shrink-0 text-muted-foreground",
+              preset === r.value && "bg-primary/10 text-primary shadow-none hover:bg-primary/15",
             )}
             onClick={() => onPresetChange(r.value)}
             aria-pressed={preset === r.value}
