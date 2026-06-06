@@ -9,8 +9,8 @@ services:
       context: ..
       dockerfile: deploy/docker/api/Dockerfile
     restart: unless-stopped
-    ports:
-      - "8000:8000"
+    # Sin mapeo a puertos del host: Coolify enruta por red interna + proxy.
+    # Para localhost directo: docker compose -f docker-compose.yml -f docker-compose.local.yml up
     environment:
       SUPABASE_URL: ${SUPABASE_URL}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
@@ -38,8 +38,6 @@ services:
         NEXT_PUBLIC_SUPABASE_URL: ${SUPABASE_URL}
         NEXT_PUBLIC_SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY}
     restart: unless-stopped
-    ports:
-      - "3000:3000"
     environment:
       DATA_SOURCE: supabase
       SUPABASE_URL: ${SUPABASE_URL}

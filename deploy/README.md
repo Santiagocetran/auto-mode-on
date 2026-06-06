@@ -18,7 +18,7 @@ Docker Compose para levantar **API** y **dashboard** en local. La base de datos 
 cd deploy
 cp .env.example .env
 # Completar SUPABASE_URL, SUPABASE_ANON_KEY y SUPABASE_SERVICE_ROLE_KEY
-docker compose up --build
+docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
 ```
 
 - **Dashboard:** http://localhost:3000  
@@ -42,15 +42,34 @@ Usuarios demo (si corriste `seeds-auth.sql` en Supabase):
 
 Para exponer el webhook de Twilio al contenedor `api`, usa un túnel (`ngrok http 8000`) y apunta el sandbox a `https://<tunnel>/whatsapp/...`.
 
+## Coolify
+
+El `docker-compose.yml` **no** publica puertos en el host (3000/8000). Coolify enruta el tráfico por su proxy a los puertos internos del contenedor.
+
+En la UI de Coolify, por servicio:
+
+| Servicio | Puerto interno | Dominio (ejemplo) |
+|----------|----------------|-------------------|
+| **dashboard** | `3000` | `app.tudominio.com` |
+| **api** | `8000` | `api.tudominio.com` |
+
+Variables de entorno: las mismas de `.env.example` (`SUPABASE_URL`, claves, etc.).
+
+Si el deploy falla con `port is already allocated`, suele haber un stack local levantado con el override:
+
+```bash
+cd deploy && docker compose -f docker-compose.yml -f docker-compose.local.yml down
+```
+
 ## Comandos útiles
 
 ```bash
-# Rebuild de una app
-docker compose up --build api
-docker compose up --build dashboard
+# Rebuild de una app (local con puertos en el host)
+docker compose -f docker-compose.yml -f docker-compose.local.yml up --build api
+docker compose -f docker-compose.yml -f docker-compose.local.yml up --build dashboard
 
-# Detener
-docker compose down
+# Detener stack local
+docker compose -f docker-compose.yml -f docker-compose.local.yml down
 ```
 
 ## Desarrollo híbrido
@@ -58,7 +77,7 @@ docker compose down
 Levantá solo una app en Docker y la otra en el host, o ninguna en Docker:
 
 ```bash
-# Solo API en Docker
+# Solo API en Docker (sin override = sin puertos en host; añade -f docker-compose.local.yml si necesitás localhost:8000)
 docker compose up api
 
 # Apps en el host (mismas credenciales de Supabase)

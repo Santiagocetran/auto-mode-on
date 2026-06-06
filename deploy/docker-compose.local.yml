@@ -1,0 +1,11 @@
+# Override para desarrollo local: expone API y dashboard en el host.
+# Uso: docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
+
+services:
+  api:
+    ports:
+      - "8000:8000"
+
+  dashboard:
+    ports:
+      - "3000:3000"
