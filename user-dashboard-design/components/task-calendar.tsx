@@ -7,7 +7,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { statusMeta } from "@/lib/ui-helpers"
-import { currentMonthKey, formatMonthLabel, parseMonthKey, shiftMonthKey } from "@/lib/date-ranges"
+import { currentMonthKey, shiftMonthKey } from "@/lib/date-ranges"
 import type { CalendarView, TaskWithRefs } from "@/lib/types"
 import { referenceNow } from "@/lib/data-source"
 
@@ -70,9 +70,6 @@ export function TaskCalendar({ view }: { view: CalendarView }) {
   const router = useRouter()
   const searchParams = useSearchParams()
   const todayKey = referenceNow().toISOString().slice(0, 10)
-  const activeMonthKey =
-    parseMonthKey(searchParams.get("mes") ?? undefined) ?? view.monthKey
-  const monthLabel = formatMonthLabel(activeMonthKey)
 
   const [selectedDate, setSelectedDate] = useState<string | null>(() =>
     defaultSelectedDate(view.days, todayKey),
@@ -93,7 +90,7 @@ export function TaskCalendar({ view }: { view: CalendarView }) {
   }
 
   const navigateMonth = (delta: number) => {
-    pushMonth(shiftMonthKey(activeMonthKey, delta))
+    pushMonth(shiftMonthKey(view.monthKey, delta))
   }
 
   const dateModeLabel =
@@ -104,7 +101,7 @@ export function TaskCalendar({ view }: { view: CalendarView }) {
       <div className="min-w-0 flex-1">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-base font-semibold capitalize">{monthLabel}</h2>
+            <h2 className="text-base font-semibold capitalize">{view.monthLabel}</h2>
             <p className="text-xs text-muted-foreground">Agrupado por {dateModeLabel}</p>
           </div>
           <div className="flex items-center gap-1">
@@ -194,6 +191,7 @@ export function TaskCalendar({ view }: { view: CalendarView }) {
                     weekday: "long",
                     day: "numeric",
                     month: "long",
+                    timeZone: "UTC",
                   })
                 : "Selecciona un día"}
             </h3>

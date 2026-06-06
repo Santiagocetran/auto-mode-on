@@ -120,9 +120,15 @@ export function eachDayInRange(range: DateRange): Date[] {
   return days
 }
 
+const UTC_DATE_FMT: Intl.DateTimeFormatOptions = { timeZone: "UTC" }
+
+function formatUTCDate(d: Date, options: Intl.DateTimeFormatOptions): string {
+  return d.toLocaleDateString("es-ES", { ...options, ...UTC_DATE_FMT })
+}
+
 export function formatRangeLabel(range: DateRange): string {
   const fmt = (d: Date) =>
-    d.toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric" })
+    formatUTCDate(d, { day: "numeric", month: "short", year: "numeric" })
   return `${fmt(range.from)} – ${fmt(range.to)}`
 }
 
@@ -161,7 +167,7 @@ export function formatMonthLabel(monthKey: string): string {
   const year = match[1]
   const month = match[2]
   const d = new Date(Date.UTC(Number(year), Number(month) - 1, 1))
-  return d.toLocaleDateString("es-ES", { month: "long", year: "numeric" })
+  return formatUTCDate(d, { month: "long", year: "numeric" })
 }
 
 export function shiftMonthKey(monthKey: string, delta: number): string {
