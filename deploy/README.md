@@ -39,8 +39,10 @@ Usuarios demo (si corriste `seeds-auth.sql` en Supabase):
 | `SUPABASE_ANON_KEY` | Clave anon (auth en el navegador) |
 | `SUPABASE_SERVICE_ROLE_KEY` | Lecturas/escrituras server-side |
 | `OPENAI_API_KEY`, `TWILIO_*` | Opcionales para WhatsApp / LLM en la API |
+| `PUBLIC_WEBHOOK_BASE_URL` | URL pública del API **sin** barra final (ej. `https://api.tudominio.com`). Twilio debe apuntar a `{PUBLIC_WEBHOOK_BASE_URL}/whatsapp`. Requerida en prod para validar la firma del webhook. |
+| `SKIP_TWILIO_SIGNATURE_VALIDATION` | `true` solo en dev local con túnel. **Nunca** en prod/Coolify. |
 
-Para exponer el webhook de Twilio al contenedor `api`, usa un túnel (`ngrok http 8000`) y apunta el sandbox a `https://<tunnel>/whatsapp/...`.
+Para exponer el webhook de Twilio al contenedor `api`, usa un túnel (`ngrok http 8000`), setea `PUBLIC_WEBHOOK_BASE_URL=https://<tunnel>` y apunta el sandbox a `https://<tunnel>/whatsapp`.
 
 ## Coolify
 
@@ -54,6 +56,8 @@ En la UI de Coolify, por servicio:
 | **api** | `8000` | `api.tudominio.com` |
 
 Variables de entorno: las mismas de `.env.example` (`SUPABASE_URL`, claves, etc.).
+
+En el servicio **api**, configurá obligatoriamente `PUBLIC_WEBHOOK_BASE_URL=https://api.tudominio.com` (el dominio que asignes en Coolify, sin barra final) y el webhook de Twilio en `{PUBLIC_WEBHOOK_BASE_URL}/whatsapp`.
 
 Si el deploy falla con `port is already allocated`, suele haber un stack local levantado con el override:
 

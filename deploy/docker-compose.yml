@@ -18,6 +18,10 @@ services:
       TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
       TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
       TWILIO_WHATSAPP_FROM: ${TWILIO_WHATSAPP_FROM:-whatsapp:+14155238886}
+      # URL pública del webhook (sin barra final), ej. https://api.tudominio.com
+      PUBLIC_WEBHOOK_BASE_URL: ${PUBLIC_WEBHOOK_BASE_URL:-}
+      # Solo dev local con túnel; nunca true en prod/Coolify
+      SKIP_TWILIO_SIGNATURE_VALIDATION: ${SKIP_TWILIO_SIGNATURE_VALIDATION:-false}
       REMINDER_TRIGGER_SECRET: ${REMINDER_TRIGGER_SECRET:-local-dev-reminder-secret}
     healthcheck:
       test:
